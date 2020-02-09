@@ -1,69 +1,98 @@
 from segmentator import Segmentator
 from reviewdata import ReviewData
 import mxnet as mx
+import os
 from mxnet import gluon
-
+from mxnet_utils.model import load_latest_checkpoint, save_gluon_model, load_pretrained_model, load_pretrained_model_only_same_shape, load_pretrained_model_only_same_shape_sup  
 class Segmentation(object):
 
   def __init__(self):
     
     self.actions = [None, 'add', 'remove', 'modify', '[START]']
     self.pms = [None, ':', '.', ',', '＜', '＞', '。', '?', '；', '、', "《", "》", '！', '，', '？', '「', '」', '[START]']
-    self.segmentator = Segmentator(self.actions, self.pms)
+    self.max_seq_len = 128
     self.batch_size = 32
-    self.data = ReviewData(self.segmentator.tokenizer, self.segmentator.transformer, self.batch_size, self.pms, self.actions)
-    self.lr = 0.0001
-    self.device = mx.gpu(0)
+    self.lr = 0.0005
+    self.device = [mx.gpu(0), mx.gpu(1)]
+    self.lr_decay_step = 1000
+    self.lr_decay_epoch = 2
+    self.lr_decay_rate_epoch = 0.9
+    self.lr_decay_rate = 1
+    self.save_freq = 5
+    self.arch_name = 'bert_100'
+    self.arch_path = os.path.join('model', self.arch_name)
+    
+    self.segmentator = Segmentator(self.actions, self.pms, self.max_seq_len)
+    self.data = ReviewData(self.segmentator.tokenizer, self.segmentator.transformer, self.batch_size, self.pms, self.actions, self.max_seq_len)
     
   def init_network(self):
-  
     self.segmentator.initialize(mx.init.Xavier(), ctx = self.device)
-    
     self.segmentator.collect_params().reset_ctx(self.device)
     
-  def init_trainer(self):
-  
-    lr_decay_step = 1000
-    lr_decay_rate = 0.9
-    lr_scheduler = mx.lr_scheduler.FactorScheduler(lr_decay_step, lr_decay_rate)
-    lr = self.lr
+    return load_pretrained_model_only_same_shape(self.segmentator, 'model/bert/0023-0.params', self.device)
+    return load_latest_checkpoint(self.segmentator, self.arch_path, self.device)
+    # if os.path.isdir('model/bert'):
+      
     
-    optimizer = 'rmsprop'
-    options = {
-      'learning_rate': lr,
-      'lr_scheduler' : lr_scheduler,
+  def init_trainer(self, epoch_start):
+    self.lr_scheduler = mx.lr_scheduler.FactorScheduler(self.lr_decay_step, self.lr_decay_rate)
+    self.optimizer = 'lamb'
+    self.options = {
+      'learning_rate': self.lr * (self.lr_decay_rate_epoch ** int(epoch_start / float(self.lr_decay_epoch))),
+      'lr_scheduler' : self.lr_scheduler,
       'clip_gradient': 1,
        # 'momentum' : 0.9,
-      'wd' : 0.0001
+      #'wd' : 0.0001
     }
     
-    self.trainer = mx.gluon.Trainer(self.segmentator.collect_params(), optimizer, options)
+    self.trainer = mx.gluon.Trainer(self.segmentator.collect_params(), self.optimizer, self.options)
 
     
   def train(self):
   
-    self.init_network()
+    epoch_start, _ = self.init_network()
+    epoch_start += 1
     
-    self.init_trainer()
-  
+    self.init_trainer(epoch_start)
     self.loader = self.data.get_loader()
     
-    for i, batch in enumerate(self.loader):
-    
-      for j in range(20000):
-    
-        nd_input_emb, nd_valid_len, nd_segment, nd_target_action, nd_target_pm, list_input_texts, list_target_texts = batch
+    for e in range(epoch_start, epoch_start + 100):
+      for i, batch in enumerate(self.loader):      
+        nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts = batch
         
-        nd_input_emb = nd_input_emb.as_in_context(self.device)
-        nd_valid_len = nd_valid_len.as_in_context(self.device)
-        nd_segment = nd_segment.as_in_context(self.device)
-        nd_target_action = nd_target_action.as_in_context(self.device)
-        nd_target_pm = nd_target_pm.as_in_context(self.device)
+        # nd_input_word_idx = nd_input_word_idx.as_in_context(self.device)
+        # nd_input_valid_len = nd_input_valid_len.as_in_context(self.device)
+        # nd_input_segment = nd_input_segment.as_in_context(self.device)
         
-        self.segmentator.train(nd_input_emb, nd_target_action, nd_target_pm, nd_segment, nd_valid_len, list_input_texts, list_target_texts, self.trainer)
-  
+        # nd_target_word_idx = nd_target_word_idx.as_in_context(self.device)
+        # nd_target_valid_len = nd_target_valid_len.as_in_context(self.device)
+        # nd_target_segment = nd_target_segment.as_in_context(self.device)
+        
+        nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx, self.device)
+        nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len, self.device)
+        nd_input_segment = gluon.utils.split_and_load(nd_input_segment, self.device)
+        
+        nd_target_word_idx = gluon.utils.split_and_load(nd_target_word_idx, self.device)
+        nd_target_valid_len = gluon.utils.split_and_load(nd_target_valid_len, self.device)
+        nd_target_segment = gluon.utils.split_and_load(nd_target_segment, self.device)
+        
+        
     
-  
+        loss, text = self.segmentator.train(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
+                                nd_target_word_idx, nd_target_valid_len, nd_target_segment,
+                                list_input_texts, list_target_texts, self.device, self.batch_size, self.trainer)
+        if (i % 10 == 0):
+          print('Epoch {} => {}, LR : {}'.format(e, loss, self.trainer.learning_rate))
+          print('Text => {}'.format(text))
+          
+      if e % self.save_freq:
+        save_gluon_model(self.segmentator, self.arch_path, e, 0) # use main     dataset
+      
+      self.options['learning_rate'] = self.trainer.learning_rate * self.lr_decay_rate_epoch
+      
+      self.trainer = mx.gluon.Trainer(self.segmentator.collect_params(), self.optimizer, self.options)
+
+
     
     
     

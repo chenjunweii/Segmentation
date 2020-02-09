@@ -87,7 +87,7 @@ def review_parser(str_filename, bool_splitString = False):
       
       for str_extractLine in list_extractLines:
       
-        if len(str_extractLine) > 0:
+        if len(str_extractLine) > 10 and len(str_extractLine) <= 128:
       
           reviews.append(str_extractLine)
       

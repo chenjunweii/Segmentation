@@ -8,49 +8,52 @@ import gluonnlp.model.transformer as trans
 from random import choice
 from opencc import OpenCC                
 from mxnet.gluon.loss import SoftmaxCrossEntropyLoss as sce
-cc = OpenCC('s2t')  # 
-
+s2t = OpenCC('s2t')  # 
+t22 = OpenCC('t2s') 
 
 
 class Segmentator(Block):
 
-  def __init__(self, actions, pms):
+  def __init__(self, actions, pms, max_seq_len):
   
     super(Segmentator, self).__init__()
     
     self.actions = actions
     self.pms = pms
     self.num_layers = 12
-    self.num_heads = 4
+    self.num_heads = 12
     self.hidden_size = 512
-    self.max_seq_length = 128
-    self.units = 32
+    self.max_seq_length = max_seq_len
+    self.units = 768
     
     with self.name_scope():
-      self.encoder, self.vocab = nlp.model.get_model('bert_12_768_12', dataset_name = 'wiki_cn_cased', use_classifier = False, use_decoder = False);
+      self.encoder, self.vocab = nlp.model.get_model('bert_12_768_12', dataset_name = 'wiki_cn_cased', use_classifier = False, use_decoder = False, pretrained = True);
       self.dropout = nn.Dropout(0.5) 
-      self.decoder_pm = trans.TransformerDecoder(attention_cell = 'multi_head', 
+      self.decoder = trans.TransformerDecoder(attention_cell = 'multi_head', 
                                               num_layers = self.num_layers,
-                                              units = self.units, hidden_size = self.hidden_size, max_length = self.max_seq_length,
+                                              units = self.units, hidden_size = self.hidden_size, max_length = self.max_seq_length + 5,
                                               num_heads = self.num_heads, scaled=True, dropout=0.1,
                                               use_residual = True, output_attention=False,
                                               weight_initializer=None, bias_initializer='zeros',
                                               scale_embed=True, prefix=None, params=None)
       
-      self.decoder_action = trans.TransformerDecoder(attention_cell = 'multi_head', 
-                                              num_layers = self.num_layers,
-                                              units = self.units, hidden_size = self.hidden_size, max_length = self.max_seq_length,
-                                              num_heads = self.num_heads, scaled=True, dropout=0.1,
-                                              use_residual = True, output_attention=False,
-                                              weight_initializer=None, bias_initializer='zeros',
-                                              scale_embed=True, prefix=None, params=None)
+      # self.decoder_action = trans.TransformerDecoder(attention_cell = 'multi_head', 
+      #                                         num_layers = self.num_layers,
+      #                                         units = self.units, hidden_size = self.hidden_size, max_length = self.max_seq_length,
+      #                                         num_heads = self.num_heads, scaled=True, dropout=0.1,
+      #                                         use_residual = True, output_attention=False,
+      #                                         weight_initializer=None, bias_initializer='zeros',
+      #                                         scale_embed=True, prefix=None, params=None)
                                               
-      self.fc_actions = nn.Dense(len(self.actions), flatten = False)
-      self.fc_pms = nn.Dense(len(self.pms), flatten = False)
+      # self.fc_actions = nn.Dense(len(self.actions), flatten = False)
+      # self.fc_pms = nn.Dense(len(self.pms), flatten = False)
       
-      self.emb_actions = (nn.Embedding(input_dim = len(self.actions), output_dim = self.units))
-      self.emb_pms = (nn.Embedding(input_dim = len(self.pms), output_dim = self.units))
-            
+      
+      self.fc_proj = nn.Dense(len(self.vocab), flatten = False)
+      
+      # self.emb_actions = (nn.Embedding(input_dim = len(self.actions), output_dim = self.units))
+      # self.emb_pms = (nn.Embedding(input_dim = len(self.pms), output_dim = self.units))
+      # self.emb 
       self.tokenizer = nlp.data.BERTTokenizer(self.vocab, lower = True);
       self.transformer = nlp.data.BERTSentenceTransform(self.tokenizer, max_seq_length = self.max_seq_length, pair = False, pad = True);
       
@@ -169,62 +172,144 @@ class Segmentator(Block):
   def debugger(self, ):    
     txt = input("Click To")
     
-  def train(self, inputs_emb, targets_action, targets_pm, segments, valid_len, inputs_text, targets_text, trainer):
+    
+  def decode_text(self, predict_output_logit):
   
-    print('-' * 20)
+    predict_output_idx = predict_output_logit.argmax(-1).asnumpy()
     
-    seq_encoding, cls_encoding = self.encoder(inputs_emb, segments, valid_len)
+    return ''.join([self.vocab.idx_to_token[int(idx)] for idx in predict_output_idx])
+    
+  def train(self, input_word_idx, input_len, input_seg, target_word_idx, target_len, target_seg, inputs_text, targets_text, devices, batch_size, trainer):
+  
+    seq_encoding = [None] * len(devices); cls_encoding = [None] * len(devices)
+    decoder_state = [None] * len(devices); target_word_emb = [None] * len(devices)
+    predict_word_emb = [None] * len(devices); predict_word_logit = [None] * len(devices)
+    target_word_logit = [None] * len(devices); input_word_logit = [None] * len(devices)
+    loss = [None] * len(devices)
+    num_device = len(devices)
+  
+    for i in range(num_device):
+      seq_encoding[i], cls_encoding[i] = self.encoder(input_word_idx[i], input_seg[i], input_len[i])
+      
+    # nd.waitall()
+    for i in range(num_device):
+      with autograd.record():
+    
+      #""" Decoder with word"
+      
+        decoder_state[i] = self.decoder.init_state_from_encoder(seq_encoding[i], input_len[i])
+        
+        target_word_emb[i] = self.encoder.word_embed(target_word_idx[i])
+          
+        predict_word_emb[i], _, _ = self.decoder.decode_seq(target_word_emb[i], decoder_state[i])#, valid_len)
+        
+        predict_word_logit[i] = nd.softmax(self.fc_proj(predict_word_emb[i]))
+        
+        target_word_logit[i] = nd.one_hot(target_word_idx[i], len(self.vocab))
+        
+        input_word_logit[i] = nd.one_hot(input_word_idx[i], len(self.vocab))
+        
+        max_target_len = int(max(target_len[i].asnumpy()))
+        
+        loss[i] = self.ce(predict_word_logit[i][:, : max_target_len - 1], target_word_logit[i][:, 1 : max_target_len])
 
-    
-    with autograd.record():
-      decoder_pm_state = self.decoder_pm.init_state_from_encoder(seq_encoding, valid_len)
-      decoder_action_state = self.decoder_action.init_state_from_encoder(seq_encoding, valid_len)
+
+      # targets_action_embs = self.emb_actions(targets_action)
+      # targets_pm_embs = self.emb_pms(targets_pm)
+      
+      # max_valid_len = int(valid_len.max().asnumpy())
+      
+      # action_output_embs, _, _ = self.decoder_action.decode_seq(targets_action_embs[ : , : max_valid_len], decoder_action_state)#, valid_len)
+      
+      # """ Decoder """
+      # decoder_pm_state = self.decoder_pm.init_state_from_encoder(seq_encoding, valid_len)
+      # decoder_action_state = self.decoder_action.init_state_from_encoder(seq_encoding, valid_len)
+      
+      # targets_action_embs = self.emb_actions(targets_action)
+      # targets_pm_embs = self.emb_pms(targets_pm)
+      
+      # max_valid_len = int(valid_len.max().asnumpy())
+      
+      # action_output_embs, _, _ = self.decoder_action.decode_seq(targets_action_embs[ : , : max_valid_len], decoder_action_state)#, valid_len)
+      # pm_output_embs, _, _ = self.decoder_pm.decode_seq(targets_pm_embs[ : , : max_valid_len], decoder_pm_state)#, valid_len)                                                                        
+      
+      # action_output = nd.softmax(self.fc_actions(self.dropout(action_output_embs)))
+      # pm_output = nd.softmax(self.fc_pms(self.dropout(pm_output_embs)))
+      
+      # action_idx = action_output.argmax(-1)
+      # pm_idx = pm_output.argmax(-1)
+      
+      # action_mask, pm_mask = self.balance_multi_objective(action_idx, pm_idx, targets_action, targets_pm, 3)
       
       # targets_action_logits = nd.one_hot(targets_action, len(self.actions))
       # targets_pm_logits = nd.one_hot(targets_pm, len(self.pms))
       
-      targets_action_embs = self.emb_actions(targets_action)
-      targets_pm_embs = self.emb_pms(targets_pm)
+      # action_loss = self.ce(action_output  * action_mask, targets_action_logits[:, 1 : max_valid_len + 1] * action_mask)
+      # pm_loss = self.ce(pm_output * pm_mask, targets_pm_logits[:,1 : max_valid_len + 1] * pm_mask)
       
-      max_valid_len = int(valid_len.max().asnumpy())
+      # loss = action_loss / action_mask.sum().detach() + pm_loss / pm_mask.sum().detach()
       
-      action_output_embs, _, _ = self.decoder_action.decode_seq(targets_action_embs[ : , : max_valid_len], decoder_action_state)#, valid_len)
-      pm_output_embs, _, _ = self.decoder_pm.decode_seq(targets_pm_embs[ : , : max_valid_len], decoder_pm_state)#, valid_len)                                                                        
       
-      action_output = nd.softmax(self.fc_actions(self.dropout(action_output_embs)))
-      pm_output = nd.softmax(self.fc_pms(self.dropout(pm_output_embs)))
+      # """ Decoder End """
       
-      action_idx = action_output.argmax(-1)
-      pm_idx = pm_output.argmax(-1)
+      # """ Encoder Start """
       
-      action_mask, pm_mask = self.balance_multi_objective(action_idx, pm_idx, targets_action, targets_pm, 3)
       
-      targets_action_logits = nd.one_hot(targets_action, len(self.actions))
-      targets_pm_logits = nd.one_hot(targets_pm, len(self.pms))
+      # targets_action_logits = nd.one_hot(targets_action, len(self.actions))
+      # targets_pm_logits = nd.one_hot(targets_pm, len(self.pms))
       
-      action_loss = self.ce(action_output  * action_mask, targets_action_logits[:, 1 : max_valid_len + 1] * action_mask)
-      pm_loss = self.ce(pm_output * pm_mask, targets_pm_logits[:,1 : max_valid_len + 1] * pm_mask)
+      # action_output = nd.softmax(self.fc_actions(self.dropout(seq_encoding)))
+      # pm_output = nd.softmax(self.fc_pms(self.dropout(seq_encoding)))
       
-      loss = action_loss / action_mask.sum().detach() + pm_loss / pm_mask.sum().detach()
+      # max_valid_len = int(valid_len.max().asnumpy())
+      
+      # action_idx = action_output.argmax(-1)
+      # pm_idx = pm_output.argmax(-1)
+      
+      # action_mask, pm_mask = self.balance_multi_objective(action_idx, pm_idx, targets_action, targets_pm, 3)
+      
+      # action_loss = self.ce(action_output[:, :max_valid_len ] * action_mask[:, :max_valid_len],
+      #               targets_action_logits[:, :max_valid_len] * action_mask[:, :max_valid_len])
+                    
+      # pm_loss = self.ce(pm_output[:, :max_valid_len ] * pm_mask[:, :max_valid_len],
+      # targets_pm_logits[:, :max_valid_len] * pm_mask[:, :max_valid_len])
+      
+      # loss = action_loss.sum() / action_mask.sum() + pm_loss.sum() / pm_mask.sum()
+      
+      # """ Encoder End """
       
     # debug_action_loss = self.ce((action_output  * action_mask) [0:,  : max_valid_len], targets_action_logits[:, 1 : max_valid_len + 1] * action_mask)
     # debug_pm_loss = self.ce(pm_output[:, : max_valid_len] * pm_mask, targets_pm_logits[0:,1:max_valid_len + 1] * pm_mask)
       
-    print('action loss : ', (action_loss / action_mask.sum()).sum())
-    print('pm_loss : ', (pm_loss / pm_mask.sum()).sum())
-    print('Loss => ', loss.sum())
+    # print('action loss : ', (action_loss / action_mask.sum()).sum())
+    # print('pm_loss : ', (pm_loss / pm_mask.sum()).sum())
+    # nd.waitall()
+
+    for _loss in loss:  
+      _loss.backward()
+    # nd.waitall()
+
     
-    loss.backward()
-    decode_text = self.decode(inputs_text[0], action_output[0], pm_output[0])
+    nd.waitall()
+    # decode_text = self.decode(inputs_text[0], action_output[0], pm_output[0])
     
-    decode_text_debug = self.decode(inputs_text[0], targets_action_logits[0, 1 : ], targets_pm_logits[0, 1:])
+    # decode_text_debug = self.decode(inputs_text[0], targets_action_logits[0, 1 : ], targets_pm_logits[0, 1:])
     
-    print('debug => ', decode_text_debug)
+    # print('debug => ', decode_text_debug)
     
-    print('Target : ', targets_text[0])
-    print('Input : ', inputs_text[0])
-    print('Decode Text : ', decode_text)
     
-    trainer.step(1, ignore_stale_grad = True)
+    
+    # print('Target : ', targets_text[0].replace('[PAD]', ''))
+    # print('Input : ', inputs_text[0].replace('[PAD]', ''))
+    # print('Decode Text : ', self.decode_text(predict_word_logit[0]).replace('[PAD]', ''))
+    # print('Debug Text : ', self.decode_text(target_word_logit[0]).replace('[PAD]', ''))
+    # print('Debug Text : ', self.decode_text(input_word_logit[0]).replace('[PAD]', ''))
+
+    
+    trainer.step(batch_size, ignore_stale_grad = True)
+    
+    loss = sum([_loss.mean().asnumpy() for _loss in loss])
+    
+    return loss, self.decode_text(predict_word_logit[0][0]).replace('[PAD]', '')
       
       

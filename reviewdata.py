@@ -4,14 +4,17 @@ import numpy as np
 from copy import deepcopy
 from utils import load_pickle
 import re
-
+from opencc import OpenCC                
+s2t = OpenCC('s2t')  # 
+t2s = OpenCC('t2s') 
 class ReviewData(object):
-  def __init__(self, tokenizer, transformer, batch_size, pms, actions):
+  def __init__(self, tokenizer, transformer, batch_size, pms, actions, max_seq_len):
     self.pms = pms
     self.tokenizer = tokenizer
     self.transformer = transformer
     
     self.batch_size = batch_size
+    self.max_seq_len = max_seq_len
     
     self.actions = actions
     self.map_pms_idx = { pm : idx for idx, pm in enumerate(self.pms) }
@@ -20,14 +23,20 @@ class ReviewData(object):
     self.data = self._load_cache()
     
     
+    
     # self.train_data = [1, 2, 3, 4, 5]
     
   def _load_cache(self):
   
     return load_pickle('reviews.cache')
   
+  def _build_target_embedding(self, str_target_text, str_input_text):
+  
+    print(self.transformer(str_input_text))
     
-  def _build_target_embedding(self, str_target_text, str_input_text, list_replaced_pms, list_replaced_idxs):
+    raise
+    
+  def dd_build_target_embedding(self, str_target_text, str_input_text, list_replaced_pms, list_replaced_idxs):
   
     # target_action 和 target_text 的長度會不同， target_action + input_text => target_text
   
@@ -37,13 +46,13 @@ class ReviewData(object):
     
     for _idx, _pm in zip(list_replaced_idxs, list_replaced_pms):
     
-      list_target_pms[_idx + 1] = _pm
+      list_target_pms[_idx] = _pm
       
-      list_target_actions[_idx + 1] = 'add'
+      list_target_actions[_idx] = 'add'
       
-    list_target_actions[0] = '[START]'
+    # list_target_actions[0] = '[START]'
     
-    list_target_pms[0] = '[START]'
+    # list_target_pms[0] = '[START]'
       
     return nd.array(self.convert_actions_to_indexs(list_target_actions)).expand_dims(0), nd.array(self.convert_pms_to_indexs(list_target_pms)).expand_dims(0)
     
@@ -87,37 +96,42 @@ class ReviewData(object):
   
     def batchify_fn(list_target_texts):
     
-      words = []; valid_lens = []; segments = []; target_actions = []; target_pms = []; list_input_texts = []
+      input_words = []; input_valid_lens = []; input_segments = []
+      
+      target_words = []; target_valid_lens = []; target_segments = []
+      
+      target_actions = []; target_pms = []; list_input_texts = []
       
       _list_target_texts = []
       
       for str_target_text in list_target_texts:
-      
-        if len(str_target_text) > 100 or len(str_target_text) < 10:
-        
+        if len(str_target_text) > self.max_seq_len or len(str_target_text) < 10:
           continue
-          
+        
+        # str_target_text = t2s.convert(str_target_text)
         _list_target_texts.append(str_target_text)
-      
         str_input_text, list_replaced_pm, list_replaced_idx = self._remove_pm(str_target_text)
         
-        target_action, target_pm = self._build_target_embedding(str_target_text, str_input_text, list_replaced_pm, list_replaced_idx) 
-      
-        sample = self.transformer([str_input_text])
+        # target_action, target_pm = self._build_target_embedding(str_target_text, str_input_text, list_replaced_pm, list_replaced_idx) 
         
-        word, valid_len, segment = nd.array([sample[0]]), nd.array([sample[1]]), nd.array([sample[2]])
+        # target_action, target_pm = self._build_target_embedding(str_target_text, str_input_text)
         
-        words.append(word.astype(np.float32)); valid_lens.append(valid_len.astype(np.float32)); segments.append(segment.astype(np.float32))
-        
-        target_actions.append(target_action.astype(np.float32)); target_pms.append(target_pm.astype(np.float32));
+        input_data = self.transformer([str_input_text])
+        target_data = self.transformer([str_target_text])
+    
+        input_word, input_valid_len, input_segment = nd.array([input_data[0]]), nd.array([input_data[1]]), nd.array([input_data[2]])
+        target_word, target_valid_len, target_segment = nd.array([target_data[0]]), nd.array([target_data[1]]), nd.array([target_data[2]])
+
+        input_words.append(input_word.astype(np.float32)); input_valid_lens.append(input_valid_len.astype(np.float32)); input_segments.append(input_segment.astype(np.float32))
+        target_words.append(target_word.astype(np.float32)); target_valid_lens.append(target_valid_len.astype(np.float32)); target_segments.append(target_segment.astype(np.float32))
+        # target_actions.append(target_action.astype(np.float32)); target_pms.append(target_pm.astype(np.float32));
         
         list_input_texts.append(str_input_text)
       
-      return nd.concat(*words, dim = 0), nd.concat(*valid_lens, dim = 0), nd.concat(*segments, dim = 0), nd.concat(*target_actions, dim = 0), nd.concat(*target_pms, dim = 0), list_input_texts, _list_target_texts
-  
+      # return nd.concat(*input_words, dim = 0), nd.concat(*input_valid_lens, dim = 0), nd.concat(*input_segments, dim = 0), nd.concat(*target_words, dim = 0), nd.concat(*target_valid_lens, dim = 0), nd.concat(*target_segments, dim = 0)#, nd.concat(*target_actions, dim = 0), nd.concat(*target_pms, dim = 0), list_input_texts, list_target_texts
+      return nd.concat(*input_words, dim = 0), nd.concat(*input_valid_lens, dim = 0), nd.concat(*input_segments, dim = 0), nd.concat(*target_words, dim = 0), nd.concat(*target_valid_lens, dim = 0), nd.concat(*target_segments, dim = 0), list_input_texts, _list_target_texts
     self.dataset = SimpleDataset(self.data)
-    
-    self.loader = DataLoader(self.dataset, batch_size = self.batch_size, batchify_fn = batchify_fn)
+    self.loader = DataLoader(self.dataset, batch_size = self.batch_size, batchify_fn = batchify_fn, shuffle = True, last_batch = 'rollover')
     
     return self.loader
     

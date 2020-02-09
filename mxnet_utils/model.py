@@ -56,6 +56,8 @@ def load_pretrained_model_only_same_shape(net, filename, ctx, prefix = ''):
         elif p not in pretrained_keys:
 
             print('[!] Warning : Parameter {} is not exist in Pretrained Model'.format(p))
+            
+    return 0, 0
 
 def load_latest_checkpoint(net, directory, ctx):
 
