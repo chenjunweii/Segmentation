@@ -8,17 +8,18 @@ from opencc import OpenCC
 s2t = OpenCC('s2t')  # 
 t2s = OpenCC('t2s') 
 class ReviewData(object):
-  def __init__(self, tokenizer, transformer, batch_size, pms, actions, max_seq_len):
+  def __init__(self, tokenizer, transformer, vocab_tgt, batch_size, pms, max_seq_len):
     self.pms = pms
     self.tokenizer = tokenizer
     self.transformer = transformer
     
     self.batch_size = batch_size
     self.max_seq_len = max_seq_len
+    self.vocab_tgt = vocab_tgt
     
-    self.actions = actions
+    # self.actions = actions
     self.map_pms_idx = { pm : idx for idx, pm in enumerate(self.pms) }
-    self.map_actions_idx = { action : idx for idx, action in enumerate(self.actions) }
+    # self.map_actions_idx = { action : idx for idx, action in enumerate(self.actions) }
     
     self.data = self._load_cache()
     
@@ -87,6 +88,31 @@ class ReviewData(object):
     # print('Target : ', target_text)
     # print('Input : ', input_text)
     return input_text, list_replaced_pms, list_replaced_idxs
+    
+  def _remove_modify(self, target_text):
+    return
+    
+  
+  def _transform_target(self, target_text):
+  
+    target_text = [self.vocab_tgt.cls_token] + [_text for _text in target_text] + [self.vocab_tgt.sep_token]
+    
+    valid_len = len(target_text)
+    
+    target_text = target_text + [self.vocab_tgt.padding_token] * (self.max_seq_len - valid_len)
+    
+    idx =  [self.vocab_tgt.token_to_idx[_text] for _text in target_text]
+    
+    # print(self.vocab_tgt)
+    
+    # print(target_text)
+    
+    # print(idx)
+    
+    # raise
+    # return np.expand_dims(np.array(idx), 0), np.expand_dims(np.array(valid_len), 0), # segment => same as input
+    return idx, valid_len # segment => same as input
+
   
   def _erroize_pm(self, text):
   
@@ -105,25 +131,23 @@ class ReviewData(object):
       _list_target_texts = []
       
       for str_target_text in list_target_texts:
-        if len(str_target_text) > self.max_seq_len or len(str_target_text) < 10:
-          continue
         
-        # str_target_text = t2s.convert(str_target_text)
-        _list_target_texts.append(str_target_text)
         str_input_text, list_replaced_pm, list_replaced_idx = self._remove_pm(str_target_text)
-        
-        # target_action, target_pm = self._build_target_embedding(str_target_text, str_input_text, list_replaced_pm, list_replaced_idx) 
-        
-        # target_action, target_pm = self._build_target_embedding(str_target_text, str_input_text)
-        
+  
         input_data = self.transformer([str_input_text])
-        target_data = self.transformer([str_target_text])
+        target_data = self._transform_target(str_target_text)
+        
+        if len(target_data[0]) > self.max_seq_len or input_data[0].shape[0] > self.max_seq_len: # 超過長度
+          continue
     
         input_word, input_valid_len, input_segment = nd.array([input_data[0]]), nd.array([input_data[1]]), nd.array([input_data[2]])
-        target_word, target_valid_len, target_segment = nd.array([target_data[0]]), nd.array([target_data[1]]), nd.array([target_data[2]])
-
+        target_word, target_valid_len = nd.array([target_data[0]]), nd.array([target_data[1]])
+        target_segment = input_segment
+        
+        _list_target_texts.append(str_target_text)
         input_words.append(input_word.astype(np.float32)); input_valid_lens.append(input_valid_len.astype(np.float32)); input_segments.append(input_segment.astype(np.float32))
-        target_words.append(target_word.astype(np.float32)); target_valid_lens.append(target_valid_len.astype(np.float32)); target_segments.append(target_segment.astype(np.float32))
+        target_words.append(target_word.astype(np.float32)); target_valid_lens.append(target_valid_len.astype(np.float32));
+        target_segments.append(target_segment.astype(np.float32))
         # target_actions.append(target_action.astype(np.float32)); target_pms.append(target_pm.astype(np.float32));
         
         list_input_texts.append(str_input_text)

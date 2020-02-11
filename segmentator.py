@@ -6,7 +6,9 @@ import gluonnlp as nlp
 import gluonnlp as nlp; import mxnet as mx;
 import gluonnlp.model.transformer as trans
 from random import choice
-from opencc import OpenCC                
+from opencc import OpenCC
+from zhon import cedict, hanzi
+import string
 from mxnet.gluon.loss import SoftmaxCrossEntropyLoss as sce
 s2t = OpenCC('s2t')  # 
 t22 = OpenCC('t2s') 
@@ -14,24 +16,30 @@ t22 = OpenCC('t2s')
 
 class Segmentator(Block):
 
-  def __init__(self, actions, pms, max_seq_len):
+  def __init__(self, pms, max_seq_len, args):
   
     super(Segmentator, self).__init__()
     
-    self.actions = actions
+    # self.actions = actions
     self.pms = pms
     self.num_layers = 12
     self.num_heads = 12
     self.hidden_size = 512
     self.max_seq_length = max_seq_len
     self.units = 768
+    self.args = args
     
     with self.name_scope():
-      self.encoder, self.vocab = nlp.model.get_model('bert_12_768_12', dataset_name = 'wiki_cn_cased', use_classifier = False, use_decoder = False, pretrained = True);
+      self.encoder, self.vocab_src = nlp.model.get_model('bert_12_768_12', dataset_name = 'wiki_cn_cased', use_classifier = False, use_decoder = False, pretrained = True);
+      
+      if (self.args.use_tc):
+        self.counter_tgt = nlp.data.count_tokens(cedict.traditional + hanzi.punctuation + string.ascii_letters + string.digits + string.punctuation)
+        self.vocab_tgt = nlp.vocab.BERTVocab(self.counter_tgt)
+    
       self.dropout = nn.Dropout(0.5) 
       self.decoder = trans.TransformerDecoder(attention_cell = 'multi_head', 
                                               num_layers = self.num_layers,
-                                              units = self.units, hidden_size = self.hidden_size, max_length = self.max_seq_length + 5,
+                                              units = self.units, hidden_size = self.hidden_size, max_length = self.max_seq_length,
                                               num_heads = self.num_heads, scaled=True, dropout=0.1,
                                               use_residual = True, output_attention=False,
                                               weight_initializer=None, bias_initializer='zeros',
@@ -47,26 +55,27 @@ class Segmentator(Block):
                                               
       # self.fc_actions = nn.Dense(len(self.actions), flatten = False)
       # self.fc_pms = nn.Dense(len(self.pms), flatten = False)
+      self.fc_proj = nn.Dense(len(self.vocab_tgt), flatten = False)
+      self.emb_tgt = nn.HybridSequential()
       
-      
-      self.fc_proj = nn.Dense(len(self.vocab), flatten = False)
+      self.emb_tgt.add(nn.Embedding(len(self.vocab_tgt), self.units))
+      self.emb_tgt.add(nn.Dropout(0.5))
       
       # self.emb_actions = (nn.Embedding(input_dim = len(self.actions), output_dim = self.units))
       # self.emb_pms = (nn.Embedding(input_dim = len(self.pms), output_dim = self.units))
       # self.emb 
-      self.tokenizer = nlp.data.BERTTokenizer(self.vocab, lower = True);
+      self.tokenizer = nlp.data.BERTTokenizer(self.vocab_src, lower = False);
       self.transformer = nlp.data.BERTSentenceTransform(self.tokenizer, max_seq_length = self.max_seq_length, pair = False, pad = True);
+    self.beam_scorer = nlp.model.BeamSearchScorer()
+    self.beam_sampler = nlp.model.BeamSearchSampler(beam_size = 5,
+                                           decoder = self._decode_step,
+                                           eos_id = self.vocab_tgt.token_to_idx[self.vocab_tgt.sep_token],
+                                           scorer = self.beam_scorer,
+                                           max_length = self.max_seq_length)
       
-      
-  def forward(self, inputs):
-  
-    return
+
     
-  def inference(self, inputs):
-  
-    return self.forward(inputs)
-  
-  def decode(self, inputs_text, predict_action, predict_pm):
+  def deprecated__decode(self, inputs_text, predict_action, predict_pm):
   
     predict_text = ''
     
@@ -168,16 +177,33 @@ class Segmentator(Block):
     _p_clip = nd.clip(1 - p, 1e-20, 1)
     return (- g * nd.log(p_clip)).sum(axis = -1)
     
-    
-  def debugger(self, ):    
-    txt = input("Click To")
-    
-    
-  def decode_text(self, predict_output_logit):
-  
+  def decode_greedy(self, predict_output_logit):
     predict_output_idx = predict_output_logit.argmax(-1).asnumpy()
+    return ''.join([self.vocab_tgt.idx_to_token[int(idx)] for idx in predict_output_idx])
     
-    return ''.join([self.vocab.idx_to_token[int(idx)] for idx in predict_output_idx])
+  def decode_beamsearch(self, decoder_state, batch_size, device):
+  
+    decode = []
+  
+    start_idx = mx.nd.full(shape = (batch_size), ctx = device, dtype = np.float32,
+                            val = self.vocab_tgt.token_to_idx[self.vocab_tgt.cls_token])
+    
+    sample, score, valid_len = self.beam_sampler(start_idx, decoder_state)
+    
+    
+    
+    for beam, _score, _len in zip(sample[0].asnumpy(), score[0].asnumpy(), valid_len[0].asnumpy()):
+    
+      decode.append((''.join([ self.vocab_tgt.idx_to_token[_beam] for _beam in beam[:_len]])).replace('[PAD]', '') + ', score : {}'.format(_score))
+      
+    return decode
+    
+  
+  
+  def _decode_step(self, step_input, state):
+    step_output, state, _ = self.decoder(self.encoder.word_embed(step_input), state)
+    step_output = self.fc_proj(step_output)
+    return nd.log_softmax(step_output), state
     
   def train(self, input_word_idx, input_len, input_seg, target_word_idx, target_len, target_seg, inputs_text, targets_text, devices, batch_size, trainer):
   
@@ -190,28 +216,36 @@ class Segmentator(Block):
   
     for i in range(num_device):
       seq_encoding[i], cls_encoding[i] = self.encoder(input_word_idx[i], input_seg[i], input_len[i])
-      
+    
     # nd.waitall()
     for i in range(num_device):
       with autograd.record():
     
-      #""" Decoder with word"
-      
+      #""" Decoder with word"            
+        # seq_encoding[i], cls_encoding[i] = self.encoder(input_word_idx[i], input_seg[i], input_len[i])
         decoder_state[i] = self.decoder.init_state_from_encoder(seq_encoding[i], input_len[i])
-        
-        target_word_emb[i] = self.encoder.word_embed(target_word_idx[i])
-          
+        target_word_emb[i] = self.emb_tgt(target_word_idx[i])
         predict_word_emb[i], _, _ = self.decoder.decode_seq(target_word_emb[i], decoder_state[i])#, valid_len)
         
+        
+        # target_word_logit_train = nd.softmax(self.fc_proj(target_word_emb[i]))
+        
+        # print(target_word_logit_train.shape)
+        
+        # print(target_word_logit[i].shape)
+        
+        # raise
+        
         predict_word_logit[i] = nd.softmax(self.fc_proj(predict_word_emb[i]))
-        
-        target_word_logit[i] = nd.one_hot(target_word_idx[i], len(self.vocab))
-        
-        input_word_logit[i] = nd.one_hot(input_word_idx[i], len(self.vocab))
+        target_word_logit[i] = nd.one_hot(target_word_idx[i], len(self.vocab_tgt))
+        input_word_logit[i] = nd.one_hot(input_word_idx[i], len(self.vocab_src))
         
         max_target_len = int(max(target_len[i].asnumpy()))
-        
         loss[i] = self.ce(predict_word_logit[i][:, : max_target_len - 1], target_word_logit[i][:, 1 : max_target_len])
+        
+        #loss[i] = loss[i].mean([1]) + (((predict_word_emb[i][:, : max_target_len - 1]) - target_word_emb[i][:, 1 : max_target_len]) ** 2).mean([1, 2])
+        
+        #+ self.ce(target_word_logit_train[:, 1 : max_target_len], target_word_logit[i][:, 1 : max_target_len])
 
 
       # targets_action_embs = self.emb_actions(targets_action)
@@ -296,20 +330,12 @@ class Segmentator(Block):
     # decode_text_debug = self.decode(inputs_text[0], targets_action_logits[0, 1 : ], targets_pm_logits[0, 1:])
     
     # print('debug => ', decode_text_debug)
-    
-    
-    
-    # print('Target : ', targets_text[0].replace('[PAD]', ''))
-    # print('Input : ', inputs_text[0].replace('[PAD]', ''))
-    # print('Decode Text : ', self.decode_text(predict_word_logit[0]).replace('[PAD]', ''))
-    # print('Debug Text : ', self.decode_text(target_word_logit[0]).replace('[PAD]', ''))
-    # print('Debug Text : ', self.decode_text(input_word_logit[0]).replace('[PAD]', ''))
-
+    #self.decode_beamsearch(decoder_state[0], int(batch_size / len(devices)), devices[0])
     
     trainer.step(batch_size, ignore_stale_grad = True)
     
     loss = sum([_loss.mean().asnumpy() for _loss in loss])
     
-    return loss, self.decode_text(predict_word_logit[0][0]).replace('[PAD]', '')
+    return loss, self.decode_greedy(predict_word_logit[0][0]).replace('[PAD]', '')
       
       
