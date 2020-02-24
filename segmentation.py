@@ -3,18 +3,18 @@ from reviewdata import ReviewData
 import mxnet as mx
 import os
 from mxnet import gluon
+import string
+from zhon import hanzi, zhuyin
 from argparse import ArgumentParser
+from utils import load_pickle
+from config import config
+from utils import load_pickle
 from mxnet_utils.model import load_latest_checkpoint, save_gluon_model, load_pretrained_model, load_pretrained_model_only_same_shape, load_pretrained_model_only_same_shape_sup  
 class Segmentation(object):
 
   def __init__(self, args):
   
-    self.args = args
-    
-    # self.actions = [None, 'add', 'remove', 'modify', '[START]']
-    self.pms = [None, ':', '.', ',', '＜', '＞', '。', '?', '；', '、', "《", "》", '！', '，', '？', '「', '」', '[START]']
-    self.max_seq_len = 64
-    self.batch_size = 64
+    self.args = args    
     self.lr = 0.0005
     self.device = [mx.gpu(0), mx.gpu(1)]
     self.lr_decay_step = 1000
@@ -22,19 +22,23 @@ class Segmentation(object):
     self.lr_decay_rate_epoch = 0.9
     self.lr_decay_rate = 1
     self.save_freq = 5
-    self.arch_name = 'bert_64_punc2'
+    self.arch_name = 'bert_256_errorize'
     self.arch_path = os.path.join('model', self.arch_name)
+    self.mode = 'train' if self.args.train else 'test'
+    self.batch_size = config[self.mode]['batch_size']
+
+    self.config = config
     
-    self.segmentator = Segmentator(self.pms, self.max_seq_len, self.args)
-    self.data = ReviewData(self.segmentator.tokenizer, self.segmentator.transformer, self.segmentator.vocab_tgt, self.batch_size, self.pms, self.max_seq_len)
+    self.segmentator = Segmentator(self.args, self.config)
+    self.data = ReviewData(self.segmentator.tokenizer, self.segmentator.transformer, self.segmentator.vocab_tgt, self.config, self.mode)
     
   def init_network(self):
     self.segmentator.initialize(mx.init.Xavier(), ctx = self.device)
     emb_pretrained = self.segmentator._collect_params_with_prefix()['encoder.word_embed.0.weight'].data()[:len(self.segmentator.vocab_tgt)]
     self.segmentator.collect_params().reset_ctx(self.device)
     self.segmentator._collect_params_with_prefix()['emb_tgt.0.weight']._load_init(emb_pretrained, self.device)
-    #return load_pretrained_model_only_same_shape(self.segmentator, 'model/bert_64/0004-0.params', self.device)
-    return load_latest_checkpoint(self.segmentator, self.arch_path, self.device)
+    return load_pretrained_model_only_same_shape(self.segmentator, 'model/bert_128_errorize/0003-0.params', self.device)
+    # return load_latest_checkpoint(self.segmentator, self.arch_path, self.device)
     # if os.path.isdir('model/bert'):
     
   def init_trainer(self, epoch_start):
@@ -98,8 +102,17 @@ class Segmentation(object):
       
       self.trainer = mx.gluon.Trainer(self.segmentator.collect_params(), self.optimizer, self.options)
 
+  def test(self):
+  
+    self.segmentator.hybridize()
+    self.loader = self.data.get_loader()
 
     
+    for i, batch in enumerate(self.loader):      
+      nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts = batch
+        
+    
+    pass
 
 parser = ArgumentParser()
 parser.add_argument("--train", dest = 'train', action = 'store_true')

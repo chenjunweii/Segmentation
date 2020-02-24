@@ -2,8 +2,15 @@ import os
 import textract
 import numpy as np
 from utils import save_pickle
+from reviewdata import ReviewData
+from config import config
+from segmentator import Segmentator
 
 str_path = 'dataset'
+
+segmentator = Segmentator(dict(), config)
+data = ReviewData(segmentator.tokenizer, segmentator.transformer, segmentator.vocab_tgt, config, 'test')
+    
 
 
 def extract_from_paragraph(str_paragraph):
@@ -80,14 +87,13 @@ def review_parser(str_filename, bool_splitString = False):
     
       str_paragraph = None
       
-      
     if str_paragraph is not None and len(str_paragraph) > 0:
      
       list_extractLines = extract_from_paragraph(str_paragraph)
       
       for str_extractLine in list_extractLines:
       
-        if len(str_extractLine) > 10 and len(str_extractLine) <= 128:
+        if len(str_extractLine) > 10 and len(str_extractLine) <= config['int_max_length']:
       
           reviews.append(str_extractLine)
       
@@ -101,23 +107,45 @@ if __name__ == '__main__':
 
   bool_splitString = True
   
-  reviews = []
-
-  for dir in os.listdir(str_path):
-
-    str_path = os.path.join(str_path, dir)
-
-    for str_filename in os.listdir(str_path):
+  dataset = dict()
+  
+  for str_set, arr_datasets in config['dataset'].items():
+  
+    reviews = []
     
-      str_filename = os.path.join(str_path, str_filename)
+    for str_dataset in arr_datasets:
+
+      str_path_dataset = os.path.join(str_path, str_dataset)
       
-      print(str_filename)
+      print(str_path_dataset)
+  
+      for str_filename in os.listdir(str_path_dataset):
       
-      review = review_parser(str_filename, bool_splitString)
+        str_filename = os.path.join(str_path_dataset, str_filename)
+        
+        print(str_filename)
+        
+        review = review_parser(str_filename, bool_splitString)
+        
+        review_errorize = []
+        if str_set == 'test':
+          for _review in review:
+          
+            str_input_text = data.pinyin_sampler.errorize_sentence(_review)
+        
+            str_input_text, _, _ = data._remove_pm(str_input_text)
+            review_errorize.append([str_input_text, _review])
+          
+          review = review_errorize
+        reviews.extend(review)
+        
       
-      reviews.extend(review)
       
-  save_pickle(reviews, 'reviews.cache')
+      
+      
+    dataset[str_set] = reviews
+      
+  save_pickle(dataset, 'reviews.cache')
       
   
     

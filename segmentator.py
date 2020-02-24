@@ -3,11 +3,10 @@ import numpy as np
 from mxnet import gluon, nd, autograd
 from mxnet.gluon import Block, nn
 import gluonnlp as nlp
-import gluonnlp as nlp; import mxnet as mx;
 import gluonnlp.model.transformer as trans
 from random import choice
 from opencc import OpenCC
-from zhon import cedict, hanzi
+from zhon import cedict, hanzi, zhuyin
 import string
 from mxnet.gluon.loss import SoftmaxCrossEntropyLoss as sce
 s2t = OpenCC('s2t')  # 
@@ -16,25 +15,26 @@ t22 = OpenCC('t2s')
 
 class Segmentator(Block):
 
-  def __init__(self, pms, max_seq_len, args):
+  def __init__(self, args, config):
   
     super(Segmentator, self).__init__()
     
     # self.actions = actions
-    self.pms = pms
+    self.pms = config['list_puncuation_marks']
+    self.config = config
     self.num_layers = 12
     self.num_heads = 12
     self.hidden_size = 512
-    self.max_seq_length = max_seq_len
+    self.max_seq_length = config['int_max_length']
     self.units = 768
     self.args = args
     
     with self.name_scope():
       self.encoder, self.vocab_src = nlp.model.get_model('bert_12_768_12', dataset_name = 'wiki_cn_cased', use_classifier = False, use_decoder = False, pretrained = True);
       
-      if (self.args.use_tc):
-        self.counter_tgt = nlp.data.count_tokens(cedict.traditional + hanzi.punctuation + string.ascii_letters + string.digits + string.punctuation)
-        self.vocab_tgt = nlp.vocab.BERTVocab(self.counter_tgt)
+      # if (self.args.use_tc):
+      self.counter_tgt = nlp.data.count_tokens(self.config['str_character_target'])
+      self.vocab_tgt = nlp.vocab.BERTVocab(self.counter_tgt)
     
       self.dropout = nn.Dropout(0.5) 
       self.decoder = trans.TransformerDecoder(attention_cell = 'multi_head', 
@@ -73,8 +73,6 @@ class Segmentator(Block):
                                            scorer = self.beam_scorer,
                                            max_length = self.max_seq_length)
       
-
-    
   def deprecated__decode(self, inputs_text, predict_action, predict_pm):
   
     predict_text = ''
@@ -197,8 +195,6 @@ class Segmentator(Block):
       decode.append((''.join([ self.vocab_tgt.idx_to_token[_beam] for _beam in beam[:_len]])).replace('[PAD]', '') + ', score : {}'.format(_score))
       
     return decode
-    
-  
   
   def _decode_step(self, step_input, state):
     step_output, state, _ = self.decoder(self.encoder.word_embed(step_input), state)

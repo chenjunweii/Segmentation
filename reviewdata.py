@@ -3,25 +3,29 @@ from mxnet import nd
 import numpy as np
 from copy import deepcopy
 from utils import load_pickle
+import jieba
 import re
+from pinyin import PinYinSampler
 from opencc import OpenCC                
 s2t = OpenCC('s2t')  # 
 t2s = OpenCC('t2s') 
 class ReviewData(object):
-  def __init__(self, tokenizer, transformer, vocab_tgt, batch_size, pms, max_seq_len):
-    self.pms = pms
+  def __init__(self, tokenizer, transformer, vocab_tgt, config, mode):
+    self.pms = config['list_puncuation_marks']
     self.tokenizer = tokenizer
     self.transformer = transformer
-    
-    self.batch_size = batch_size
-    self.max_seq_len = max_seq_len
+    self.mode = mode
+    self.batch_size = config[mode]['batch_size']
+    self.max_seq_len = config['int_max_length']
     self.vocab_tgt = vocab_tgt
-    
+    self.config = config
+    self.extra_vocab = config['list_extra_words']
+    self.pinyin_sampler = PinYinSampler(list(vocab_tgt.token_to_idx.keys()), self.extra_vocab, self.config)
     # self.actions = actions
     self.map_pms_idx = { pm : idx for idx, pm in enumerate(self.pms) }
     # self.map_actions_idx = { action : idx for idx, action in enumerate(self.actions) }
     
-    self.data = self._load_cache()
+    self.data = self._load_cache()[mode]
     
     
     
@@ -79,19 +83,24 @@ class ReviewData(object):
     list_replaced_pms = []
     input_text = ''
     for _idx, _target_text in enumerate(target_text):
-      if _target_text in self.pms:
+      if _target_text in self.pms and np.random.ranf() < self.config['float_pm_remove_rate']:
         list_replaced_idxs.append(len(input_text))
         list_replaced_pms.append(_target_text)
       else:
         input_text = input_text + _target_text
         
-    # print('Target : ', target_text)
-    # print('Input : ', input_text)
     return input_text, list_replaced_pms, list_replaced_idxs
+
+  def _swap_word_order(self, target_text):
+  
+    pass
+  
+  def _add_redundancy(self, input_text):
+    pass
     
-  def _remove_modify(self, target_text):
-    return
-    
+  def _remove_char(self, input_text):
+  
+    pass
   
   def _transform_target(self, target_text):
   
@@ -103,6 +112,18 @@ class ReviewData(object):
     
     idx =  [self.vocab_tgt.token_to_idx[_text] for _text in target_text]
     
+    # if 0 in idx:
+    
+    #   _idx = idx.index(0)
+      
+    #   print(target_text)
+      
+    #   print(self.vocab_tgt.token_to_idx['[UNK]'])
+      
+    #   print(target_text[_idx])
+    
+    #   raise
+    
     # print(self.vocab_tgt)
     
     # print(target_text)
@@ -113,11 +134,7 @@ class ReviewData(object):
     # return np.expand_dims(np.array(idx), 0), np.expand_dims(np.array(valid_len), 0), # segment => same as input
     return idx, valid_len # segment => same as input
 
-  
-  def _erroize_pm(self, text):
-  
-    pass
-  
+
   def get_loader(self):
   
     def batchify_fn(list_target_texts):
@@ -131,11 +148,23 @@ class ReviewData(object):
       _list_target_texts = []
       
       for str_target_text in list_target_texts:
+      
+        if self.mode == 'train':
+      
+          str_input_text = self.pinyin_sampler.errorize_sentence(str_target_text)
         
-        str_input_text, list_replaced_pm, list_replaced_idx = self._remove_pm(str_target_text)
+          str_input_text, list_replaced_pm, list_replaced_idx = self._remove_pm(str_input_text)
+          
+          input_data = self.transformer([str_input_text])
+          target_data = self._transform_target(str_target_text)
   
-        input_data = self.transformer([str_input_text])
-        target_data = self._transform_target(str_target_text)
+          
+        else:        
+          str_input_text = str_target_text[0]
+          str_target_text = str_target_text[1]
+          
+          input_data = self.transformer([str_input_text])
+          target_data = self._transform_target(str_target_text)
         
         if len(target_data[0]) > self.max_seq_len or input_data[0].shape[0] > self.max_seq_len: # 超過長度
           continue
