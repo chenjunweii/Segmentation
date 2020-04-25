@@ -1,0 +1,23 @@
+model/bert_cged16_fgx1_lamb_detach_wd0001/0014-0.params 
+
+False Positive Rate = 0.4004 (1298/3242)
+
+Detection Level
+        Accuracy = 0.6556 (4287/6539)
+        Precision = 0.6435 (2343/3641)
+        Recall = 0.7106 (2343/3297)
+        F1-Score = 0.6754 ((2*0.6435*0.7106)/(0.6435+0.7106))
+
+Identification Level
+        Accuracy = 0.5685 (4333/7622)
+        Precision = 0.5057 (2389/4724)
+        Recall = 0.4376 (2389/5459)
+        F1-Score = 0.4692 ((2*0.5057*0.4376)/(0.5057+0.4376))
+
+Position Level
+        Accuracy = 0.4224 (3663/8672)
+        Precision = 0.2977 (1719/5774)        Recall = 0.2204 (1719/7798)
+        F1-Score = 0.2533 ((2*0.2977*0.2204)/(0.2977+0.2204))   
+        
+-------------
+

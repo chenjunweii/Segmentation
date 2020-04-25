@@ -117,26 +117,22 @@ if __name__ == '__main__':
 
       str_path_dataset = os.path.join(str_path, str_dataset)
       
-      print(str_path_dataset)
-  
       for str_filename in os.listdir(str_path_dataset):
       
         str_filename = os.path.join(str_path_dataset, str_filename)
         
-        print(str_filename)
-        
         review = review_parser(str_filename, bool_splitString)
         
         review_errorize = []
-        if str_set == 'test':
-          for _review in review:
+        # if str_set == 'test':
+        #   for _review in review:
           
-            str_input_text = data.pinyin_sampler.errorize_sentence(_review)
+        #     str_input_text = data.pinyin_sampler.errorize_sentence(_review)
         
-            str_input_text, _, _ = data._remove_pm(str_input_text)
-            review_errorize.append([str_input_text, _review])
+        #     str_input_text, _, _ = data._remove_pm(str_input_text)
+        #     review_errorize.append([str_input_text, _review])
           
-          review = review_errorize
+        #   review = review_errorize
         reviews.extend(review)
         
       

@@ -2,11 +2,13 @@ from mxnet.gluon.data import SimpleDataset, DataLoader
 from mxnet import nd
 import numpy as np
 from copy import deepcopy
+from random import choice
 from utils import load_pickle
 import jieba
 import re
 from pinyin import PinYinSampler
-from opencc import OpenCC                
+from opencc import OpenCC
+from structure import Structure
 s2t = OpenCC('s2t')  # 
 t2s = OpenCC('t2s') 
 class ReviewData(object):
@@ -24,8 +26,10 @@ class ReviewData(object):
     # self.actions = actions
     self.map_pms_idx = { pm : idx for idx, pm in enumerate(self.pms) }
     # self.map_actions_idx = { action : idx for idx, action in enumerate(self.actions) }
-    
+    self.structure = Structure()
     self.data = self._load_cache()[mode]
+    
+    print('mode {} => {}'.format(self.mode, len(self.data)))
     
     
     
@@ -34,32 +38,6 @@ class ReviewData(object):
   def _load_cache(self):
   
     return load_pickle('reviews.cache')
-  
-  def _build_target_embedding(self, str_target_text, str_input_text):
-  
-    print(self.transformer(str_input_text))
-    
-    raise
-    
-  def dd_build_target_embedding(self, str_target_text, str_input_text, list_replaced_pms, list_replaced_idxs):
-  
-    # target_action 和 target_text 的長度會不同， target_action + input_text => target_text
-  
-    list_target_actions = [None] * (512)#len(str_input_text) + 1) # +1 是爲了多預測一格讓我們可以在頭尾都做預測
-    
-    list_target_pms = [None] * 512#(len(str_input_text) + 1)
-    
-    for _idx, _pm in zip(list_replaced_idxs, list_replaced_pms):
-    
-      list_target_pms[_idx] = _pm
-      
-      list_target_actions[_idx] = 'add'
-      
-    # list_target_actions[0] = '[START]'
-    
-    # list_target_pms[0] = '[START]'
-      
-    return nd.array(self.convert_actions_to_indexs(list_target_actions)).expand_dims(0), nd.array(self.convert_pms_to_indexs(list_target_pms)).expand_dims(0)
     
   def convert_actions_to_indexs(self, tokens):
   
@@ -79,17 +57,26 @@ class ReviewData(object):
     
   def _remove_pm(self, target_text):
     
-    list_replaced_idxs = []
-    list_replaced_pms = []
+    # list_replaced_idxs = []
+    # list_replaced_pms = []
     input_text = ''
     for _idx, _target_text in enumerate(target_text):
       if _target_text in self.pms and np.random.ranf() < self.config['float_pm_remove_rate']:
-        list_replaced_idxs.append(len(input_text))
-        list_replaced_pms.append(_target_text)
+        # list_replaced_idxs.append(len(input_text))
+        # list_replaced_pms.append(_target_text)
+        pass
+      elif _target_text in self.pms and np.random.ranf() < self.config['float_pm_random_rate']:
+        pms_random = deepcopy(self.pms)
+        pms_random.remove(_target_text)
+        pm_random = choice(pms_random)
+        input_text = input_text + pm_random
+      elif _target_text not in self.pms and np.random.ranf() < self.config['float_pm_random_location_rate']:
+        pm_random = choice(self.pms)
+        input_text = input_text + pm_random + _target_text
       else:
         input_text = input_text + _target_text
         
-    return input_text, list_replaced_pms, list_replaced_idxs
+    return input_text
 
   def _swap_word_order(self, target_text):
   
@@ -110,7 +97,7 @@ class ReviewData(object):
     
     target_text = target_text + [self.vocab_tgt.padding_token] * (self.max_seq_len - valid_len)
     
-    idx =  [self.vocab_tgt.token_to_idx[_text] for _text in target_text]
+    idx = [self.vocab_tgt.token_to_idx[_text] for _text in target_text]
     
     # if 0 in idx:
     
@@ -149,14 +136,34 @@ class ReviewData(object):
       
       for str_target_text in list_target_texts:
       
-        if self.mode == 'train':
-      
-          str_input_text = self.pinyin_sampler.errorize_sentence(str_target_text)
+        if self.mode == 'train' or self.mode == 'test': # 先暫時這樣本來 test 應該走 else
         
-          str_input_text, list_replaced_pm, list_replaced_idx = self._remove_pm(str_input_text)
+          # if np.random.ranf() > 0.5:
+          #   str_input_text = self.structure.randomize_word_order(str_target_text)
+          # else:
+          str_input_text = self.pinyin_sampler.errorize_sentence(str_target_text)
+          str_input_text = self._remove_pm(str_input_text)
           
+          # if self.mode == 'test' and len(str_input_text) > 150:
+          
+          #   print(str_input_text)
+          
+          #   raise
+          
+          
+          # print("=" * 10)
+          # print("Input => ", str_input_text)          
+          # print("Target => ", str_target_text)
+          
+          # print("=" * 10)
           input_data = self.transformer([str_input_text])
           target_data = self._transform_target(str_target_text)
+          
+          # print(str_input_text)
+          
+          # print(input_data)
+          
+          # raise
   
           
         else:        

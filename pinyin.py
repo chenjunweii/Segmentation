@@ -113,7 +113,31 @@ class PinYinSampler(object):
         
       elif len(token) > 1 and np.random.ranf() < self.options['float_word_error_rate']:
       
-        error_text = error_text + self.sample_same_vowel_word(token)
+      # if True:
+      
+        error_token = self.sample_same_vowel_word(token)
+        
+        if (error_token) == token: # 如果沒找到 same_vowel_word 就拆開做
+        
+          random_token = ''
+        
+          for t in token:
+          
+            if np.random.ranf() < self.options['float_char_error_rate']:
+      
+              random_token = random_token + self.sample_same_vowel_char(t)
+              
+            else:
+            
+              random_token = random_token + t
+              
+          error_text = error_text + random_token            
+          
+        else:
+        
+          error_text = error_text + error_token
+        
+        
         
         # print('{} => {}'.format(token, self.sample_same_vowel_word(token)))
         
