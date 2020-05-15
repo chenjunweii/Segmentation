@@ -186,3 +186,11 @@ config['float_pm_random_rate'] = 0 # 隨機將 pm 換成其他 pm 的機率
 config['float_pm_random_location_rate'] = 0.0 # 隨機將在不是 pm 的 char 前面加上隨機的 pm
 config['float_char_error_rate'] = 0.05 # 
 config['float_word_error_rate'] = 0.75
+
+
+
+bert_full_3
+
+no pretrain
+
+[0.6, 0.2, 0.15, 0.15]

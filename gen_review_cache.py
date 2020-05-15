@@ -1,14 +1,38 @@
 import os
+import sys
+sys.path.append(os.path.abspath('../'))
+from argparse import ArgumentParser
+
 import textract
 import numpy as np
+from data.reviewdata import ReviewData
 from utils import save_pickle
-from reviewdata import ReviewData
 from config import config
 from segmentator import Segmentator
 
-str_path = 'dataset'
+str_path = 'dataset/review'
 
-segmentator = Segmentator(dict(), config)
+parser = ArgumentParser()
+parser.add_argument("--train", dest = 'train', action = 'store_true')
+parser.add_argument("--test", dest = 'test', action = 'store_true')
+parser.add_argument("--run", dest = 'run', action = 'store_true')
+parser.add_argument("--decoder", dest = 'decoder', action = 'store_true')
+parser.add_argument("--interact", dest = 'interact', action = 'store_true')
+parser.add_argument("--pretrain", dest = 'pretrain', action = 'store_true')
+parser.add_argument("--dataset", dest = 'dataset')
+
+
+parser.add_argument("--text", dest = 'text')
+parser.add_argument("--use-pretrained", dest = 'use_pretrained', action = 'store_true')
+parser.add_argument("--use-tc", dest = 'use_tc', action = 'store_true')
+parser.add_argument("--cpu", dest = "cpu", action = 'store_true')
+parser.add_argument("-ag", '--accumulate-gradient', dest = 'ag', action = 'store_true')
+parser.add_argument("--paper", dest = 'paper', action = 'store_true')
+
+args = parser.parse_args()
+    
+segmentator = Segmentator(args, config)
+
 data = ReviewData(segmentator.tokenizer, segmentator.transformer, segmentator.vocab_tgt, config, 'test')
     
 
@@ -111,37 +135,32 @@ if __name__ == '__main__':
   
   for str_set, arr_datasets in config['dataset'].items():
   
-    reviews = []
+    reviews = [] #
     
     for str_dataset in arr_datasets:
 
       str_path_dataset = os.path.join(str_path, str_dataset)
       
       for str_filename in os.listdir(str_path_dataset):
-      
         str_filename = os.path.join(str_path_dataset, str_filename)
-        
         review = review_parser(str_filename, bool_splitString)
-        
-        review_errorize = []
-        # if str_set == 'test':
-        #   for _review in review:
-          
-        #     str_input_text = data.pinyin_sampler.errorize_sentence(_review)
-        
-        #     str_input_text, _, _ = data._remove_pm(str_input_text)
-        #     review_errorize.append([str_input_text, _review])
-          
-        #   review = review_errorize
+        if str_set == 'test':
+          review_errorize = []
+          for _review in review:
+            if len(_review) > config['int_max_length'] - 2: # -2 [Start] [END]
+              continue
+            # print(_review)
+            str_input_text = data.pinyin_sampler.errorize_sentence(_review)
+            str_input_text = data._remove_pm(str_input_text)
+            # print(str_input_text)
+            review_errorize.append([str_input_text, _review])
+          review = review_errorize
+        # else:
         reviews.extend(review)
-        
-      
-      
-      
-      
     dataset[str_set] = reviews
-      
-  save_pickle(dataset, 'reviews.cache')
+  print(dataset['train'][0])
+  print(dataset['test'][0])
+  save_pickle(dataset, 'cache/reviews.cache')
       
   
     

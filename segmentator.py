@@ -29,16 +29,16 @@ class Segmentator(Block):
     self.max_seq_length = config['int_max_length']
     self.units = 768
     self.args = args
-    self.beam_size = 3
-    if args.decoder:
+    self.beam_size = 5
+    if args.decoder or args is None:
       self.error_type = ['correct', 'R', 'S', 'M', 'W', '[START]', '[END]']
     else:
       self.error_type = ['correct', 'R', 'S', 'M', 'W']
     
     if self.args.dataset == 'CGED16':
       with self.name_scope():
-        self.encoder, self.vocab_src = nlp.model.get_model('bert_12_768_12', dataset_name = 'wiki_cn_cased', use_classifier = False, use_decoder = False, pretrained = True);
-        # self.encoder2 = nlp.model.TransformerEncoder(attention_cell='multi_head', num_layers=2, units=768, hidden_size=2048, max_length = self.max_seq_length, num_heads = 8, scaled=True, dropout=0.1, use_residual=True, output_attention=False, output_all_encodings=False, weight_initializer=None, bias_initializer='zeros', prefix=None, params=None)
+        self.vocab_tgt = None
+        self.encoder, self.vocab_src = nlp.model.get_model('bert_12_768_12', dataset_name = 'wiki_cn_cased', use_classifier = False, use_decoder = False, pretrained = False);
         if args.decoder:
           self.emb_tgt = nn.HybridSequential()
         
@@ -75,11 +75,41 @@ class Segmentator(Block):
     else:
       with self.name_scope():
         self.encoder, self.vocab_src = nlp.model.get_model('bert_12_768_12', dataset_name = 'wiki_cn_cased', use_classifier = False, use_decoder = False, pretrained = True);
-        
+        # self.encoder = trans.TransformerEncoder(attention_cell='multi_head',
+        # num_layers=2, units=300, hidden_size=2048,
+        # max_length=150, num_heads=4, scaled=True, dropout=0.0,     use_residual=True, output_attention=False, weight_initializer=None, bias_initializer='zeros', prefix=None, params=None)
+        self.encoder2 = nlp.model.TransformerEncoder(attention_cell='multi_head',
+          num_layers=2, units=768, hidden_size=2048,
+          max_length = self.max_seq_length,
+          num_heads = 8,
+          scaled=True,
+          dropout=0.1,
+          use_residual=True,
+          output_attention=False,
+          weight_initializer=None,
+          bias_initializer='zeros', prefix=None, params=None)
         # if (self.args.use_tc):
+        # keys = self.vocab_src.token_to_idx.keys()
+        
+        # key_to_check = ['E', 'e', 'ｅ', '1', '１']
+        
+        # for k in key_to_check:
+        
+        #   print('{} => {}'.format(k, k in keys))
+        
+        # raise
         self.counter_tgt = nlp.data.count_tokens(self.config['str_character_target'])
         self.vocab_tgt = nlp.vocab.BERTVocab(self.counter_tgt)
       
+        # keys = self.vocab_tgt.token_to_idx.keys()
+        
+        # key_to_check = ['E', 'e', 'ｅ', '1', '１']
+        
+        # for k in key_to_check:
+        
+        #   print('{} => {}'.format(k, k in keys))
+        
+        # raise
         self.dropout = nn.Dropout(0.5) 
         self.decoder = trans.TransformerDecoder(attention_cell = 'multi_head', 
                                                 num_layers = self.num_layers,
@@ -99,8 +129,10 @@ class Segmentator(Block):
                                                 
         # self.fc_actions = nn.Dense(len(self.actions), flatten = False)
         # self.fc_pms = nn.Dense(len(self.pms), flatten = False)
-        self.fc_proj = nn.Dense(len(self.vocab_tgt), flatten = False)
+        self.fc_proj = nn.Dense(len(self.vocab_tgt), flatten = False, in_units = 768)
         self.emb_tgt = nn.HybridSequential()
+        self.fc_error = nn.Dense(len(self.error_type), flatten = False, in_units = 768)
+        self.fc_correction = nn.Dense(len(self.vocab_tgt) + 1, flatten = False, in_units = 768) 
         
         self.emb_tgt.add(nn.Embedding(len(self.vocab_tgt), self.units))
         self.emb_tgt.add(nn.Dropout(0.5))
@@ -108,7 +140,7 @@ class Segmentator(Block):
         # self.emb_actions = (nn.Embedding(input_dim = len(self.actions), output_dim = self.units))
         # self.emb_pms = (nn.Embedding(input_dim = len(self.pms), output_dim = self.units))
         # self.emb 
-        self.tokenizer = nlp.data.BERTTokenizer(self.vocab_src, lower = False);
+        self.tokenizer = nlp.data.BERTTokenizer(self.vocab_src, lower = True);
         self.transformer = nlp.data.BERTSentenceTransform(self.tokenizer, max_seq_length = self.max_seq_length, pair = False, pad = True);
       self.beam_scorer = nlp.model.BeamSearchScorer()
       self.beam_sampler = nlp.model.BeamSearchSampler(beam_size = self.beam_size,
@@ -116,6 +148,34 @@ class Segmentator(Block):
                                            eos_id = self.vocab_tgt.token_to_idx[self.vocab_tgt.sep_token],
                                            scorer = self.beam_scorer,
                                            max_length = self.max_seq_length)
+                                           
+                                           
+  def initialize_full_network(self, input_word_idx, input_len, input_seg, target_word_idx, devices):
+  
+    # initialize for multi tasking
+  
+    seq_encoding = [None] * len(devices); cls_encoding = [None] * len(devices)
+    decoder_state = [None] * len(devices); target_word_emb = [None] * len(devices)
+    predict_word_emb = [None] * len(devices); predict_word_logit = [None] * len(devices)
+    target_word_logit = [None] * len(devices); input_word_logit = [None] * len(devices)
+    fix_encoding = [None] * len(devices)
+    loss = [None] * len(devices)
+    num_device = len(devices)
+  
+    for i in range(num_device):
+      with autograd.record():
+        seq_encoding[i], cls_encoding[i] = self.encoder(input_word_idx[i], input_seg[i], input_len[i])
+        fix_encoding[i], _ = self.encoder2(seq_encoding[i])
+        self.fc_correction(fix_encoding[i])
+        self.fc_error(fix_encoding[i])
+    
+    for i in range(num_device):
+      with autograd.record():
+        decoder_state[i] = self.decoder.init_state_from_encoder(seq_encoding[i], input_len[i])
+        target_word_emb[i] = self.emb_tgt(target_word_idx[i])
+        predict_word_emb[i], _, _ = self.decoder.decode_seq(target_word_emb[i], decoder_state[i])#, valid_len)
+        
+        
       
   def deprecated__decode(self, inputs_text, predict_action, predict_pm):
   
@@ -415,41 +475,37 @@ class Segmentator(Block):
     
     beams = self.decode_beamsearch(decoder_state, 1, devices[0])
         
-    for i, beam in enumerate(beams):
+    # for i, beam in enumerate(beams):
     
-      print('Top {} => {}'.format(i + 1, beam.replace('[CLS]', '').replace('[SEP]', '')))
+    #   print('Top {} => {}'.format(i + 1, beam.replace('[CLS]', '').replace('[SEP]', '')))
+      
+    return beams[0].replace('[CLS]', '').replace('[SEP]', '')
       
   def balance_class(self, prediction, target_idx, k = 1):
   
     predict_idx = prediction.argmax(-1)
     
-    bg_predict = predict_idx == 0
-    fg_predict = predict_idx != 0
+    bg_predict = predict_idx == 0 # correct
+    fg_predict = predict_idx != 0 # error type or correction char idx
      
     target_idx = target_idx.expand_dims(-1)
     bg_target = target_idx == 0
     fg_target = target_idx != 0
-    
     num_bg_predict = int(bg_predict.sum().asnumpy())
     num_bg_target = int(bg_target.sum().asnumpy())
-    
     num_fg_predict = int(fg_predict.sum().asnumpy())
     num_fg_target = int(fg_target.sum().asnumpy())
-    
-    # if num_bg_target > num_fg_target :
-    
-    
     topk_target = nd.topk(bg_target.reshape(-1) + nd.random.uniform_like(bg_target, 0.0, 0.1).reshape(-1),
               k = min(num_fg_target * k, int(np.prod(bg_target.shape))), ret_typ = 'mask').reshape_like(bg_target)
-    
     topk_predict = nd.topk(bg_predict.reshape(-1) + nd.random.uniform_like(bg_predict, 0.0, 0.1).reshape(-1),
               k = min(num_fg_predict * k, int(np.prod(bg_predict.shape))), ret_typ = 'mask').reshape_like(bg_predict)
-    # print('[Target] => bg : {}, fg : {}, all : {}'.format(int(topk_target.sum().asnumpy()),
-    #   num_fg_target,
-    #   int((topk_target + fg_target).clip(0,1).sum().asnumpy())))
-    
+    if len(topk_predict.shape) == 3:
+      topk_predict = topk_predict[:, :, 0]
+    if len(topk_target.shape) == 3:
+      topk_target = topk_target[:, :, 0]
+    if len(fg_target.shape) == 3:
+      fg_target = fg_target[:, :, 0]
     mask = (topk_target + fg_target + fg_predict + topk_predict).clip(0, 1)
-    
     return mask
       
     # else:
@@ -470,6 +526,7 @@ class Segmentator(Block):
     for i in range(num_device):
       with autograd.record():
         seq_encoding[i], cls_encoding[i] = self.encoder(input_word_idx[i], input_seg[i], input_len[i])
+        seq_encoding[i], _ = self.encoder2(seq_encoding[i])
         
     # for i in range(num_device):
     #   with autograd.record():
@@ -509,11 +566,70 @@ class Segmentator(Block):
       
     nd.waitall()
     trainer.step(batch_size, ignore_stale_grad = True)
-    # loss = sum([_loss.mean().asnumpy() for _loss in loss])
+    loss = sum([_loss.mean().asnumpy() for _loss in loss])
     return loss
       
-      
   
+  def test_CSC(self, input_word_idx, input_len, input_seg, error_idx, devices, batch_size, trainer):
+    pass
+  
+  def train_csc_fixed(self, input_word_idx, input_len, input_seg, correction_idx, devices, batch_size, trainer):
+    seq_encoding = [None] * len(devices); cls_encoding = [None] * len(devices)
+    decoder_state = [None] * len(devices); target_word_emb = [None] * len(devices)
+    predict_word_emb = [None] * len(devices); predict_word_logit = [None] * len(devices)
+    target_word_logit = [None] * len(devices); input_word_logit = [None] * len(devices)
+    loss = [None] * len(devices)
+    num_device = len(devices)
+    
+    predict_start_idx = []; predict_end_idx = []; predict_error_idx = []
+  
+    for i in range(num_device):
+      with autograd.record():
+        seq_encoding[i], cls_encoding[i] = self.encoder(input_word_idx[i], input_seg[i], input_len[i])
+        
+    # for i in range(num_device):
+    #   with autograd.record():
+    #     seq_encoding[i], cls_encoding[i] = self.encoder2(seq_encoding[i], states = None, valid_length = input_len[i])
+    
+    
+    for i in range(num_device):
+    
+      with autograd.record():
+      
+        max_target_len = int(max(input_len[i].asnumpy()))
+      
+        # _predict_start_logit = nd.softmax(self.fc_start(seq_encoding[i]))
+        _predict_error_logit = nd.softmax(self.fc_correction(seq_encoding[i]))
+        # _predict_end_logit = nd.softmax(self.fc_end(seq_encoding[i]))
+        
+        # _target_start_logit = nd.one_hot(start_idx[i], 2).reshape_like(_predict_start_logit)
+        # _target_end_logit = nd.one_hot(end_idx[i], 2).reshape_like(_predict_end_logit)
+        
+        # print(_predict_error_logit.shape)
+        # print(correction_idx[i].shape)
+        _target_error_logit = nd.one_hot(correction_idx[i], len(self.vocab_tgt) + 1)#.reshape_like(_predict_error_logit)
+        # print('predcit logit sum : ',( _predict_error_logit.argmax(-1) > 0).sum())
+        
+        balance_mask = self.balance_class(_predict_error_logit[:, : max_target_len], correction_idx[i][:, : max_target_len]).detach()
+        
+        # _loss_start = self.ce(_predict_start_logit, _target_start_logit)
+        # _loss_end = self.ce(_predict_end_logit, _target_end_logit)
+        loss[i] = self.ce(_predict_error_logit[:, : max_target_len], _target_error_logit[:, : max_target_len]) * balance_mask
+        
+        # _loss_count = (_predict_end_logit.sum() - _predict_start_logit.sum()) ** 2
+        
+        # _loss = ( _loss_start + _loss_error + _loss_end ) / 3
+        
+        # loss[i] = _loss[ : , : max_target_len]# + _loss_count
+        
+    for _loss in loss:
+      _loss.backward()
+      
+    nd.waitall()
+    trainer.step(batch_size, ignore_stale_grad = True)
+    loss = sum([_loss.mean().asnumpy() for _loss in loss])
+    return loss
+    
   def train_CGEDDecoder(self, input_word_idx, input_len, input_seg, error_idx, devices, batch_size, trainer):
     
     seq_encoding = [None] * len(devices); cls_encoding = [None] * len(devices)

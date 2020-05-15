@@ -87,9 +87,9 @@ def load_latest_checkpoint(net, directory, ctx):
 
         return 0, 0
 
-    checkpoint = os.path.join(directory, '{:04d}-{}.params'.format(max_epcoh, max_step))
+    checkpoint = os.path.join(directory, '{:010d}-{}.params'.format(max_epcoh, max_step))
     
-    net.load_parameters(checkpoint, ctx = ctx)
+    net.load_parameters(checkpoint, ctx = ctx, ignore_extra = True)
 
     print(Fore.LIGHTYELLOW_EX + '[*] Restore From CheckPoint => {}'.format(checkpoint) + Style.RESET_ALL)
 
@@ -107,7 +107,7 @@ def save_gluon_model(net, directory, epoch, step):
 
         os.mkdir(directory)
 
-    checkpoint = os.path.join(directory, '{:04d}-{}.params'.format(epoch, step))
+    checkpoint = os.path.join(directory, '{:010d}-{}.params'.format(epoch, step))
     
     net.save_parameters(checkpoint)
     
