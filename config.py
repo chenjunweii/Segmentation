@@ -17,18 +17,20 @@ for (let v of inputs){
 config = dict()
 
 config['dir'] = '/home/ur/sent_seg'
-config['int_max_length'] = 256 # dataset 目前最長也是 256
+config['int_max_length'] = 128 # dataset 目前最長也是 256
 config['list_puncuation_marks'] = [s for s in hanzi.punctuation + zhuyin.marks + string.punctuation]
 config['str_character_target'] = '． ' + fullwidth_digit + cedict.traditional + hanzi.punctuation + zhuyin.characters + zhuyin.marks + string.printable + jaconv.h2z(string.ascii_letters, ascii = True)
-config['float_pm_remove_rate'] = 1
-config['float_pm_random_rate'] = 0.0 # 隨機將 pm 換成其他 pm 的機率
-config['float_pm_random_location_rate'] = 0.0 # 隨機將在不是 pm 的 char 前面加上隨機的 pm
+config['float_pm_random_remove_rate'] = 0.25
+config['float_pm_random_add_rate'] = 0.25 # 隨機將 pm 換成其他 pm 的機率
+config['float_pm_random_error_rate'] = 0.25 # 隨機將在不是 pm 的 char 前面加上隨機的 pm
+config['float_pm_random_bypass_rate'] = 0.25 # 隨機將在不是 pm 的 char 前面加上隨機的 pm
 config['float_char_error_rate'] = 0.05 # 
 config['float_word_error_rate'] = 0.75
 config['csc_fixed'] = True
-config['arch_name'] = 'bert_multi_encoder_no_pretrain_0.5_0.5_0.0_0.0'
-config['int_val_set'] = 100
+config['arch_name'] = 'bert_128_with_constraint_no_pretrain'
+config['int_val_set'] = 1000
 config['val_freq'] = 2500
+config['use_encoder_constraint'] = True
 
 # print(os.path.join(config['dir'], 'embedding/tencent_vocab_tc' ))
 config['list_extra_words'] = load_pickle(os.path.join(config['dir'], 'embedding/tencent_vocab_tc'))

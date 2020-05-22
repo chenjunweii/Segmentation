@@ -78,16 +78,16 @@ class Segmentator(Block):
         # self.encoder = trans.TransformerEncoder(attention_cell='multi_head',
         # num_layers=2, units=300, hidden_size=2048,
         # max_length=150, num_heads=4, scaled=True, dropout=0.0,     use_residual=True, output_attention=False, weight_initializer=None, bias_initializer='zeros', prefix=None, params=None)
-        self.encoder2 = nlp.model.TransformerEncoder(attention_cell='multi_head',
-          num_layers=2, units=768, hidden_size=2048,
-          max_length = self.max_seq_length,
-          num_heads = 8,
-          scaled=True,
-          dropout=0.1,
-          use_residual=True,
-          output_attention=False,
-          weight_initializer=None,
-          bias_initializer='zeros', prefix=None, params=None)
+        # self.encoder2 = nlp.model.TransformerEncoder(attention_cell='multi_head',
+        #   num_layers=2, units=768, hidden_size=2048,
+        #   max_length = self.max_seq_length,
+        #   num_heads = 8,
+        #   scaled=True,
+        #   dropout=0.1,
+        #   use_residual=True,
+        #   output_attention=False,
+        #   weight_initializer=None,
+        #   bias_initializer='zeros', prefix=None, params=None)
         # if (self.args.use_tc):
         # keys = self.vocab_src.token_to_idx.keys()
         
@@ -131,8 +131,11 @@ class Segmentator(Block):
         # self.fc_pms = nn.Dense(len(self.pms), flatten = False)
         self.fc_proj = nn.Dense(len(self.vocab_tgt), flatten = False, in_units = 768)
         self.emb_tgt = nn.HybridSequential()
-        self.fc_error = nn.Dense(len(self.error_type), flatten = False, in_units = 768)
-        self.fc_correction = nn.Dense(len(self.vocab_tgt) + 1, flatten = False, in_units = 768) 
+        self.fc_pm_error = nn.Dense(2, flatten = False, in_units = 768)
+        self.fc_pm_remove = nn.Dense(2, flatten = False, in_units = 768)
+        self.fc_pm_add = nn.Dense(2, flatten = False, in_units = 768)
+        # self.fc_error = nn.Dense(len(self.error_type), flatten = False, in_units = 768)
+        # self.fc_correction = nn.Dense(len(self.vocab_tgt) + 1, flatten = False, in_units = 768) 
         
         self.emb_tgt.add(nn.Embedding(len(self.vocab_tgt), self.units))
         self.emb_tgt.add(nn.Dropout(0.5))
@@ -327,18 +330,55 @@ class Segmentator(Block):
     step_output = self.fc_error(step_output)
     return nd.log_softmax(step_output), state
     
-  def train(self, input_word_idx, input_len, input_seg, target_word_idx, target_len, target_seg, inputs_text, targets_text, devices, batch_size, trainer):
+  def train(self, input_word_idx, input_len, input_seg, target_word_idx, target_len, target_seg, pm_error_idx, pm_add_idx, pm_remove_idx, 
+inputs_text, targets_text, devices, batch_size, trainer):
   
     seq_encoding = [None] * len(devices); cls_encoding = [None] * len(devices)
     decoder_state = [None] * len(devices); target_word_emb = [None] * len(devices)
     predict_word_emb = [None] * len(devices); predict_word_logit = [None] * len(devices)
     target_word_logit = [None] * len(devices); input_word_logit = [None] * len(devices)
     loss = [None] * len(devices)
+    loss_review = [None] * len(devices)
+    loss_pm = [None] * len(devices)
     num_device = len(devices)
+    
+    encoder_constraint_loss = []
   
     for i in range(num_device):
       with autograd.record():
         seq_encoding[i], cls_encoding[i] = self.encoder(input_word_idx[i], input_seg[i], input_len[i])
+        
+        if self.config['use_encoder_constraint']:
+          pm_add_loss = self.fc_pm_add(seq_encoding[i])
+          pm_remove_loss = self.fc_pm_remove(seq_encoding[i])
+          encoder_constraint_loss
+          max_target_len = int(max(input_len[i].asnumpy()))
+      
+          _predict_pm_error_logit = nd.softmax(self.fc_pm_error(seq_encoding[i]))
+          _predict_pm_add_logit = nd.softmax(self.fc_pm_add(seq_encoding[i]))
+          _predict_pm_remove_logit = nd.softmax(self.fc_pm_remove(seq_encoding[i]))
+          
+          # _target_start_logit = nd.one_hot(start_idx[i], 2).reshape_like(_predict_start_logit)
+          # _target_end_logit = nd.one_hot(end_idx[i], 2).reshape_like(_predict_end_logit)
+          _target_pm_error_logit = nd.one_hot(pm_error_idx[i], 2).reshape_like(_predict_pm_error_logit)
+          _target_pm_add_logit = nd.one_hot(pm_add_idx[i], 2).reshape_like(_predict_pm_add_logit)
+          _target_pm_remove_logit = nd.one_hot(pm_remove_idx[i], 2).reshape_like(_predict_pm_remove_logit)
+          
+          # print('predcit logit sum : ',( _predict_error_logit.argmax(-1) > 0).sum())
+          
+          pm_error_balance_mask = self.balance_class(_predict_pm_error_logit[:, : max_target_len], pm_error_idx[i][:, : max_target_len]).detach()
+          pm_add_balance_mask = self.balance_class(_predict_pm_add_logit[:, : max_target_len], pm_add_idx[i][:, : max_target_len]).detach()
+          pm_remove_balance_mask = self.balance_class(_predict_pm_remove_logit[:, : max_target_len], pm_remove_idx[i][:, : max_target_len]).detach()
+          
+          # _loss_start = self.ce(_predict_start_logit, _target_start_logit)
+          # _loss_end = self.ce(_predict_end_logit, _target_end_logit)
+          loss_pm_error = self.ce(_predict_pm_error_logit[:, : max_target_len], _target_pm_error_logit[:, : max_target_len]) * pm_error_balance_mask
+          loss_pm_add = self.ce(_predict_pm_error_logit[:, : max_target_len], _target_pm_error_logit[:, : max_target_len]) * pm_add_balance_mask
+          loss_pm_remove = self.ce(_predict_pm_error_logit[:, : max_target_len], _target_pm_error_logit[:, : max_target_len]) * pm_remove_balance_mask
+          
+          loss_pm[i] = (loss_pm_error + loss_pm_add + loss_pm_remove) / 3
+          
+          # print(loss_pm[i])
     
     # nd.waitall()
     for i in range(num_device):
@@ -364,7 +404,13 @@ class Segmentator(Block):
         input_word_logit[i] = nd.one_hot(input_word_idx[i], len(self.vocab_src))
         
         max_target_len = int(max(target_len[i].asnumpy()))
-        loss[i] = self.ce(predict_word_logit[i][:, : max_target_len - 1], target_word_logit[i][:, 1 : max_target_len])
+        loss_review[i] = self.ce(predict_word_logit[i][:, : max_target_len - 1], target_word_logit[i][:, 1 : max_target_len])
+        
+        if self.config['use_encoder_constraint']:
+          # loss[i] = (loss_review[i].mean() + loss_pm[i].mean()) / 2
+          loss[i] = loss_review[i].mean() + loss_pm[i].mean()
+        else:
+          loss[i] = loss_review[i].mean()  
         
         #loss[i] = loss[i].mean([1]) + (((predict_word_emb[i][:, : max_target_len - 1]) - target_word_emb[i][:, 1 : max_target_len]) ** 2).mean([1, 2])
         
@@ -442,8 +488,9 @@ class Segmentator(Block):
     # print('pm_loss : ', (pm_loss / pm_mask.sum()).sum())
     # nd.waitall()
 
-    for _loss in loss:  
+    for _loss in loss:
       _loss.backward()
+      # _loss_pm.backward()
     # nd.waitall()
 
     
@@ -455,11 +502,20 @@ class Segmentator(Block):
     # print('debug => ', decode_text_debug)
     #self.decode_beamsearch(decoder_state[0], int(batch_size / len(devices)), devices[0])
     
-    trainer.step(batch_size, ignore_stale_grad = True)
+    # trainer.step(batch_size, ignore_stale_grad = True)
+    trainer.step(1, ignore_stale_grad = True)
     
-    loss = sum([_loss.mean().asnumpy() for _loss in loss])
+    if self.config['use_encoder_constraint']:
     
-    return loss#, self.decode_greedy(predict_word_logit[0][0]).replace('[PAD]', '')
+      loss_review = sum([_loss.mean().asnumpy() for _loss in loss_review])
+      loss_pm = sum([_loss.mean().asnumpy() for _loss in loss_pm])
+      
+      return loss_review, loss_pm #, self.decode_greedy(predict_word_logit[0][0]).replace('[PAD]', '')
+    else:
+      loss_review = sum([_loss.mean().asnumpy() for _loss in loss_review])
+      return loss_review, None
+    
+    
       
   def run(self, text, devices):
   

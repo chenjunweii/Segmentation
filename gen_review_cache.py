@@ -150,8 +150,8 @@ if __name__ == '__main__':
             if len(_review) > config['int_max_length'] - 2: # -2 [Start] [END]
               continue
             # print(_review)
-            str_input_text = data.pinyin_sampler.errorize_sentence(_review)
-            str_input_text = data._remove_pm(str_input_text)
+            # str_input_text = data.pinyin_sampler.errorize_sentence(_review)
+            str_input_text, _, _, _ = data.errorize_pm(_review)
             # print(str_input_text)
             review_errorize.append([str_input_text, _review])
           review = review_errorize

@@ -27,12 +27,12 @@ class Segmentation(object):
   
     self.args = args    
     self.lr = 0.0005
-    self.device = ([mx.gpu(0), mx.gpu(1)] if not args.cpu else [mx.cpu(0)]) if args.train else [mx.gpu(0)]
-    self.test_device = [mx.gpu(1)]
+    self.device = [mx.gpu(0)]#([mx.gpu(0), mx.gpu(1)] if not args.cpu else [mx.cpu(0)]) if args.train else [mx.gpu(0)]
+    self.test_device = [mx.gpu(0)]
     self.lr_decay_step = 5000
     # self.lr_decay_epoch = 2
     self.lr_decay_rate_epoch = 0.9
-    self.lr_decay_rate = 1
+    self.lr_decay_rate = 0.9
     self.save_freq = 1 # epoch
     self.save_freq_step = 5000
     self.arch_name = config['arch_name']
@@ -88,158 +88,165 @@ class Segmentation(object):
     self.sw = SummaryWriter(logdir = 'logs/' + self.config['arch_name'], flush_secs=5)
     
     
-    self.cgedloader = self.cgeddata.get_loader()
+    # self.cgedloader = self.cgeddata.get_loader()
     self.reviewloader = self.reviewdata.get_loader()
-    self.csc15loader = self.csc15data.get_loader()
-    self.csc14loader = self.csc14data.get_loader()
+    # self.csc15loader = self.csc15data.get_loader()
+    # self.csc14loader = self.csc14data.get_loader()
     self.reviewloader_val = self.reviewdata_val.get_loader()
  
     
-    self.int_cged_samples = len(self.cgeddata.data)
+    # self.int_cged_samples = len(self.cgeddata.data)
     self.int_review_samples = len(self.reviewdata.data)
-    self.int_csc15_samples = len(self.csc15data.data)
-    self.int_csc14_samples = len(self.csc14data.data)
+    # self.int_csc15_samples = len(self.csc15data.data)
+    # self.int_csc14_samples = len(self.csc14data.data)
     
     self.segmentator.hybridize()
     
     list_input_texts_test = None
     list_target_texts_test = None
     
-    self.cged_enumerator = enumerate(self.cgedloader)
-    self.cged_epoch = 0
+    # self.cged_enumerator = enumerate(self.cgedloader)
+    # self.cged_epoch = 0
     self.review_epoch = 0
-    self.csc15_epoch = 0
-    self.csc14_epoch = 0
+    # self.csc15_epoch = 0
+    # self.csc14_epoch = 0
     self.review_enumerator = enumerate(self.reviewloader)
-    self.csc15_enumerator = enumerate(self.csc15loader)
-    self.csc14_enumerator = enumerate(self.csc14loader)
+    # self.csc15_enumerator = enumerate(self.csc15loader)
+    # self.csc14_enumerator = enumerate(self.csc14loader)
     self.review_enumerator_val = enumerate(self.reviewloader_val)
     
     
-    progress_cged = tqdm(total = self.int_cged_samples, desc = 'cged')
+    # progress_cged = tqdm(total = self.int_cged_samples, desc = 'cged')
     progress_review = tqdm(total = self.int_review_samples, desc = 'review')
-    progress_csc15 = tqdm(total = self.int_csc15_samples, desc = 'csc15')
-    progress_csc14 = tqdm(total = self.int_csc14_samples, desc = 'csc14')
+    # progress_csc15 = tqdm(total = self.int_csc15_samples, desc = 'csc15')
+    # progress_csc14 = tqdm(total = self.int_csc14_samples, desc = 'csc14')
     
     
     # for intialize parameter in network for multi-task
-    i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts) = next(self.review_enumerator, (-1, [None] * 8))
-    nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx[:2], self.device)
-    nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len[:2], self.device)
-    nd_input_segment = gluon.utils.split_and_load(nd_input_segment[:2], self.device)
+    # i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment,  nd_pm_error_idx, nd_pm_add_idx, nd_pm_remove_idx, list_input_texts, list_target_texts) = next(self.review_enumerator, (-1, [None] * 11))
+    # nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx[:2], self.device)
+    # nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len[:2], self.device)
+    # nd_input_segment = gluon.utils.split_and_load(nd_input_segment[:2], self.device)
     
-    nd_target_word_idx = gluon.utils.split_and_load(nd_target_word_idx[:2], self.device)
-    nd_target_valid_len = gluon.utils.split_and_load(nd_target_valid_len[:2], self.device)
-    nd_target_segment = gluon.utils.split_and_load(nd_target_segment[:2], self.device)
-    self.segmentator.initialize_full_network(nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, self.device)
+    # nd_target_word_idx = gluon.utils.split_and_load(nd_target_word_idx[:2], self.device)
+    # nd_target_valid_len = gluon.utils.split_and_load(nd_target_valid_len[:2], self.device)
+    # nd_target_segment = gluon.utils.split_and_load(nd_target_segment[:2], self.device)
+    # self.segmentator.initialize_full_network(nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, self.device)
     
     for _step in range(step_start, step_start + 30001):
     
-      try: # 為了解決 batch 剩 1 的問題，但是要 debug 時很難 debug
-        _dataset = np.random.choice(['review', 'cged', 'csc15', 'csc14'], p = [0.5, 0.5, 0, 0])
-        
-        if (_step % self.config['val_freq'] == 0 or _step % 100 == 0) and _step != 0:
-        
-          _dataset = 'review'
+      # try: # 為了解決 batch 剩 1 的問題，但是要 debug 時很難 debug
+      _dataset = np.random.choice(['review', 'cged', 'csc15', 'csc14'], p = [1, 0, 0, 0])
       
-        if _dataset == 'cged':
-          # i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, list_ids, list_input_texts, list_target_texts) = self.cged_enumerator.__next__()
+      if (_step % self.config['val_freq'] == 0 or _step % 100 == 0) and _step != 0:
+        _dataset = 'review'
+    
+      if _dataset == 'cged':
+        # i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, list_ids, list_input_texts, list_target_texts) = self.cged_enumerator.__next__()
+        i, ( nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_error_idx, list_input_texts, list_target_texts) = next(self.cged_enumerator, (-1, [None] * 6))
+        if i == -1:
+          self.cgedloader = self.cgeddata.get_loader()
+          self.cged_epoch += 1
+          self.cged_enumerator = enumerate(self.cgedloader)
           i, ( nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_error_idx, list_input_texts, list_target_texts) = next(self.cged_enumerator, (-1, [None] * 6))
-          if i == -1:
-            self.cgedloader = self.cgeddata.get_loader()
-            self.cged_epoch += 1
-            self.cged_enumerator = enumerate(self.cgedloader)
-            i, ( nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_error_idx, list_input_texts, list_target_texts) = next(self.cged_enumerator, (-1, [None] * 6))
-            progress_cged = tqdm(total = self.int_cged_samples, desc = 'cged')
-          _batch_size = int(nd_input_word_idx.shape[0] / len(self.device)) * len(self.device)
+          progress_cged = tqdm(total = self.int_cged_samples, desc = 'cged')
+        _batch_size = int(nd_input_word_idx.shape[0] / len(self.device)) * len(self.device)
+        
+        nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx[:_batch_size], self.device)
+        nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len[:_batch_size], self.device)
+        nd_input_segment = gluon.utils.split_and_load(nd_input_segment[:_batch_size], self.device)
+        
+        nd_error_idx = gluon.utils.split_and_load(nd_error_idx[:_batch_size], self.device)
+        
+        loss = self.segmentator.train_CGED(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
+                                nd_error_idx, self.device, _batch_size, self.trainer)
+        progress_cged.update(_batch_size)
+        
+        if (_step % 100 == 0):
+          print('CGED Loss => {}, Epoch => {}, Lr => {}'.format(loss, self.cged_epoch, self.trainer.learning_rate))
+        
+      elif _dataset == 'review':
+        i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, nd_pm_error_idx, nd_pm_add_idx, nd_pm_remove_idx, list_input_texts, list_target_texts) = next(self.review_enumerator, (-1, [None] * 11))
+        if i == -1:
+          self.reviewloader = self.reviewdata.get_loader()
+          self.review_epoch += 1
+          self.review_enumerator = enumerate(self.reviewloader)
+          i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, nd_pm_error_idx, nd_pm_add_idx, nd_pm_remove_idx, list_input_texts, list_target_texts) = next(self.review_enumerator, (-1, [None] * 11))
+          progress_review = tqdm(total = self.int_review_samples, desc = 'review')
           
-          nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx[:_batch_size], self.device)
-          nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len[:_batch_size], self.device)
-          nd_input_segment = gluon.utils.split_and_load(nd_input_segment[:_batch_size], self.device)
+        _batch_size = int(nd_input_word_idx.shape[0] / len(self.device)) * len(self.device)
+        nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx[:_batch_size], self.device)
+        nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len[:_batch_size], self.device)
+        nd_input_segment = gluon.utils.split_and_load(nd_input_segment[:_batch_size], self.device)
+        
+        
+        
+        nd_pm_error_idx = gluon.utils.split_and_load(nd_pm_error_idx[:_batch_size], self.device)
+        nd_pm_add_idx = gluon.utils.split_and_load(nd_pm_add_idx[:_batch_size], self.device)
+        nd_pm_remove_idx = gluon.utils.split_and_load(nd_pm_remove_idx[:_batch_size], self.device)
+        nd_target_word_idx = gluon.utils.split_and_load(nd_target_word_idx[:_batch_size], self.device)
+        nd_target_valid_len = gluon.utils.split_and_load(nd_target_valid_len[:_batch_size], self.device)
+        nd_target_segment = gluon.utils.split_and_load(nd_target_segment[:_batch_size], self.device)
+      
+        loss, loss_pm = self.segmentator.train(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
+                                nd_target_word_idx, nd_target_valid_len, nd_target_segment,
+                                nd_pm_error_idx, nd_pm_add_idx, nd_pm_remove_idx, 
+                                list_input_texts[:_batch_size], list_target_texts[:_batch_size], self.device, _batch_size, self.trainer)
+                                
+        if (_step % 100 == 0):
+        
+          print('Review Loss => {}, Epoch => {}, Lr => {}'.format(loss, self.review_epoch, self.trainer.learning_rate))
+          self.sw.add_scalar(tag = 'review_loss', value = loss, global_step = _step)
+          if self.config['use_encoder_constraint']:
+            self.sw.add_scalar(tag = 'pm_loss', value = loss_pm, global_step = _step)
+        
+        progress_review.update(_batch_size)
+        
+      elif _dataset == 'csc15':
+        if not self.config['csc_fixed']:
+          i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts) = next(self.csc14_enumerator, (-1, [None] * 8))
+        else:
+          i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, list_input_texts, list_target_texts) = next(self.csc14_enumerator, (-1, [None] * 6))
+        if i == -1:
+          self.csc15loader = self.csc15data.get_loader()
+          self.csc15_epoch += 1
+          self.csc15_enumerator = enumerate(self.csc15loader)
+          i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts) = next(self.csc15_enumerator, (-1, [None] * 8))
+          progress_csc15 = tqdm(total = self.int_csc15_samples, desc = 'csc15')
           
-          nd_error_idx = gluon.utils.split_and_load(nd_error_idx[:_batch_size], self.device)
-          
-          loss = self.segmentator.train_CGED(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
-                                  nd_error_idx, self.device, _batch_size, self.trainer)
-          progress_cged.update(_batch_size)
-          
-          if (_step % 100 == 0):
-            print('CGED Loss => {}, Epoch => {}, Lr => {}'.format(loss, self.cged_epoch, self.trainer.learning_rate))
-          
-        elif _dataset == 'review':
-          i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts) = next(self.review_enumerator, (-1, [None] * 8))
-          if i == -1:
-            self.reviewloader = self.reviewdata.get_loader()
-            self.review_epoch += 1
-            self.review_enumerator = enumerate(self.reviewloader)
-            i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts) = next(self.review_enumerator, (-1, [None] * 8))
-            progress_review = tqdm(total = self.int_review_samples, desc = 'review')
-            
-          _batch_size = int(nd_input_word_idx.shape[0] / len(self.device)) * len(self.device)
-          nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx[:_batch_size], self.device)
-          nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len[:_batch_size], self.device)
-          nd_input_segment = gluon.utils.split_and_load(nd_input_segment[:_batch_size], self.device)
-          
-          nd_target_word_idx = gluon.utils.split_and_load(nd_target_word_idx[:_batch_size], self.device)
+        _batch_size = int(nd_input_word_idx.shape[0] / len(self.device)) * len(self.device)
+        nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx[:_batch_size], self.device)
+        nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len[:_batch_size], self.device)
+        nd_input_segment = gluon.utils.split_and_load(nd_input_segment[:_batch_size], self.device)
+        
+        nd_target_word_idx = gluon.utils.split_and_load(nd_target_word_idx[:_batch_size], self.device)
+        # nd_target_valid_len = gluon.utils.split_and_load(nd_target_valid_len[:_batch_size], self.device)
+        # nd_target_segment = gluon.utils.split_and_load(nd_target_segment[:_batch_size], self.device)
+        if not self.config['csc_fixed']:
           nd_target_valid_len = gluon.utils.split_and_load(nd_target_valid_len[:_batch_size], self.device)
           nd_target_segment = gluon.utils.split_and_load(nd_target_segment[:_batch_size], self.device)
-        
+      
           loss = self.segmentator.train(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
                                   nd_target_word_idx, nd_target_valid_len, nd_target_segment,
                                   list_input_texts[:_batch_size], list_target_texts[:_batch_size], self.device, _batch_size, self.trainer)
-                                  
-          if (_step % 100 == 0):
-          
-            print('Review Loss => {}, Epoch => {}, Lr => {}'.format(loss, self.review_epoch, self.trainer.learning_rate))
-            self.sw.add_scalar(tag = 'review_loss', value = loss, global_step = _step)
-          
-          progress_review.update(_batch_size)
-          
-        elif _dataset == 'csc15':
-          if not self.config['csc_fixed']:
-            i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts) = next(self.csc14_enumerator, (-1, [None] * 8))
-          else:
-            i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, list_input_texts, list_target_texts) = next(self.csc14_enumerator, (-1, [None] * 6))
-          if i == -1:
-            self.csc15loader = self.csc15data.get_loader()
-            self.csc15_epoch += 1
-            self.csc15_enumerator = enumerate(self.csc15loader)
-            i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts) = next(self.csc15_enumerator, (-1, [None] * 8))
-            progress_csc15 = tqdm(total = self.int_csc15_samples, desc = 'csc15')
-            
-          _batch_size = int(nd_input_word_idx.shape[0] / len(self.device)) * len(self.device)
-          nd_input_word_idx = gluon.utils.split_and_load(nd_input_word_idx[:_batch_size], self.device)
-          nd_input_valid_len = gluon.utils.split_and_load(nd_input_valid_len[:_batch_size], self.device)
-          nd_input_segment = gluon.utils.split_and_load(nd_input_segment[:_batch_size], self.device)
-          
-          nd_target_word_idx = gluon.utils.split_and_load(nd_target_word_idx[:_batch_size], self.device)
-          # nd_target_valid_len = gluon.utils.split_and_load(nd_target_valid_len[:_batch_size], self.device)
-          # nd_target_segment = gluon.utils.split_and_load(nd_target_segment[:_batch_size], self.device)
-          if not self.config['csc_fixed']:
-            nd_target_valid_len = gluon.utils.split_and_load(nd_target_valid_len[:_batch_size], self.device)
-            nd_target_segment = gluon.utils.split_and_load(nd_target_segment[:_batch_size], self.device)
+                                    
+        else:
+          loss = self.segmentator.train_csc_fixed(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
+                                    nd_target_word_idx, self.device, _batch_size, self.trainer)
         
-            loss = self.segmentator.train(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
-                                    nd_target_word_idx, nd_target_valid_len, nd_target_segment,
-                                    list_input_texts[:_batch_size], list_target_texts[:_batch_size], self.device, _batch_size, self.trainer)
-                                      
-          else:
-            loss = self.segmentator.train_csc_fixed(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
-                                      nd_target_word_idx, self.device, _batch_size, self.trainer)
-          
-          
-                                  
-          # loss = self.segmentator.train(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
-          #                        nd_target_word_idx, nd_target_valid_len, nd_target_segment,
-          #list_input_texts[:_batch_size], list_target_texts[:_batch_size], self.device, _batch_size, self.trainer)
-                                  
-          if (_step % 100 == 0):
-          
-            print('CSC15 Loss => {}, Epoch => {}, Lr => {}'.format(loss, self.csc15_epoch, self.trainer.learning_rate))
-          
-          progress_csc15.update(_batch_size)
-        #   print('Epoch {} Step {} => {}, LR : {}'.format(e, i, loss, self.trainer.learning_rate))
-        elif _dataset == 'csc14':
+        
+                                
+        # loss = self.segmentator.train(nd_input_word_idx, nd_input_valid_len, nd_input_segment,
+        #                        nd_target_word_idx, nd_target_valid_len, nd_target_segment,
+        #list_input_texts[:_batch_size], list_target_texts[:_batch_size], self.device, _batch_size, self.trainer)
+                                
+        if (_step % 100 == 0):
+        
+          print('CSC15 Loss => {}, Epoch => {}, Lr => {}'.format(loss, self.csc15_epoch, self.trainer.learning_rate))
+        
+        progress_csc15.update(_batch_size)
+      #   print('Epoch {} Step {} => {}, LR : {}'.format(e, i, loss, self.trainer.learning_rate))
+      elif _dataset == 'csc14':
         
           if not self.config['csc_fixed']:
             i, (nd_input_word_idx, nd_input_valid_len, nd_input_segment, nd_target_word_idx, nd_target_valid_len, nd_target_segment, list_input_texts, list_target_texts) = next(self.csc14_enumerator, (-1, [None] * 8))
@@ -280,9 +287,9 @@ class Segmentation(object):
           
           progress_csc14.update(_batch_size)
       #   print('Epoch {} Step {} => {}, LR : {}'.format(e, i, loss, self.trainer.learning_rate))
-      except Exception as e:
-        # print(e)
-        continue
+      # except Exception as e:
+      #   # print(e)
+      #   continue
       # if e % self.save_freq == 0:
       #   save_gluon_model(self.segmentator, self.arch_path, e, 0) # use main     dataset
       if _step % self.save_freq_step == 0:
